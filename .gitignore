@@ -1,0 +1,12 @@
+.env
+.env.*
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.claude/
+venv/
+.idea/
+.vscode/
+.DS_Store
+deploy-bot-*.log

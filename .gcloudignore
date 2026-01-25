@@ -1,0 +1,17 @@
+.git
+.gitignore
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+tests/
+*.log
+.DS_Store
+.idea/
+.vscode/
+README.md
+SPEC*.md
+deploy-bot-*.log
