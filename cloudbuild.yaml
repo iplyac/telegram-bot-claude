@@ -1,0 +1,87 @@
+steps:
+  # Step 1: Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
+      - '.'
+
+  # Step 2: Push image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}'
+      - '--all-tags'
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--set-env-vars'
+      - 'AGENT_API_URL=${_AGENT_API_URL},LOG_LEVEL=INFO'
+      - '--set-secrets'
+      - 'TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest'
+
+  # Step 4: Setup Telegram webhook
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+
+        # Get service URL
+        SERVICE_URL=$(gcloud run services describe ${_SERVICE_NAME} \
+          --region=${_REGION} \
+          --format='value(status.url)')
+
+        echo "Service URL: $${SERVICE_URL}"
+
+        # Get bot token from Secret Manager
+        BOT_TOKEN=$(gcloud secrets versions access latest --secret=TELEGRAM_BOT_TOKEN)
+
+        # Derive webhook secret (sha256 of token, first 32 chars)
+        WEBHOOK_SECRET=$(echo -n "$${BOT_TOKEN}" | sha256sum | cut -c1-32)
+
+        # Webhook URL
+        WEBHOOK_URL="$${SERVICE_URL}/telegram/webhook"
+        echo "Webhook URL: $${WEBHOOK_URL}"
+
+        # Set webhook with secret_token
+        RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot$${BOT_TOKEN}/setWebhook" \
+          -H "Content-Type: application/json" \
+          -d "{\"url\": \"$${WEBHOOK_URL}\", \"secret_token\": \"$${WEBHOOK_SECRET}\"}")
+
+        if echo "$${RESPONSE}" | grep -q '"ok":true'; then
+          echo "Webhook set successfully"
+        else
+          echo "WARNING: Failed to set webhook: $${RESPONSE}"
+        fi
+
+# Substitution variables with defaults
+substitutions:
+  _REGION: 'europe-west4'
+  _SERVICE_NAME: 'telegram-bot'
+  _AGENT_API_URL: ''
+
+# Build options
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+# Images to push
+images:
+  - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest'
+  - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
