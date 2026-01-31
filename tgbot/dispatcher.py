@@ -1,6 +1,7 @@
 """Dispatcher module for registering handlers on the Telegram application."""
 
 import logging
+import time
 from typing import Optional
 
 from telegram import Update
@@ -9,6 +10,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from tgbot.commands.start import StartCommand
 from tgbot.commands.test import TestCommand
 from tgbot.handlers.voice import handle_voice_message
+from tgbot.logging_config import generate_request_id
 from tgbot.services.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
@@ -86,16 +88,20 @@ async def _handle_text_message(
     if update.effective_user is None or update.message is None or update.message.text is None:
         return
 
+    start_time = time.monotonic()
+    request_id = generate_request_id()
     user_id = update.effective_user.id
     message_text = update.message.text
     session_id = f"tg_{user_id}"
 
     logger.info(
-        "Received text message",
+        "Message received",
         extra={
+            "request_id": request_id,
             "user_id": user_id,
-            "message_length": len(message_text),
             "update_id": update.update_id,
+            "message_type": "text",
+            "message_length": len(message_text),
         },
     )
 
@@ -103,19 +109,34 @@ async def _handle_text_message(
     if backend_client.agent_api_url is None:
         logger.warning(
             "AGENT_API_URL not configured, cannot forward message",
-            extra={"user_id": user_id},
+            extra={"request_id": request_id, "user_id": user_id},
         )
         await update.message.reply_text(MSG_AGENT_NOT_CONFIGURED)
         return
 
     # Forward to backend
     try:
-        response = await backend_client.forward_message(session_id, message_text)
+        response = await backend_client.forward_message(session_id, message_text, request_id)
         await update.message.reply_text(response)
+
+        latency_total_ms = int((time.monotonic() - start_time) * 1000)
+        logger.info(
+            "Reply sent",
+            extra={
+                "request_id": request_id,
+                "user_id": user_id,
+                "latency_total_ms": latency_total_ms,
+            },
+        )
     except Exception as e:
         logger.error(
             f"Backend error: {type(e).__name__}",
-            extra={"user_id": user_id, "error": str(e)},
+            extra={
+                "request_id": request_id,
+                "user_id": user_id,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+            },
         )
         await update.message.reply_text(MSG_BACKEND_UNAVAILABLE)
 

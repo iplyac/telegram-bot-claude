@@ -2,10 +2,12 @@
 
 import base64
 import logging
+import time
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from tgbot.logging_config import generate_request_id
 from tgbot.services.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
@@ -34,18 +36,19 @@ async def handle_voice_message(
     if voice is None:
         return
 
+    start_time = time.monotonic()
+    request_id = generate_request_id()
     user_id = update.effective_user.id
     session_id = f"tg_{user_id}"
 
     logger.info(
-        "Voice message received",
+        "Message received",
         extra={
+            "request_id": request_id,
             "user_id": user_id,
-            "session_id": session_id,
-            "duration": voice.duration,
-            "file_size": voice.file_size,
-            "mime_type": voice.mime_type,
             "update_id": update.update_id,
+            "message_type": "voice",
+            "audio_duration_seconds": voice.duration,
         },
     )
 
@@ -53,7 +56,7 @@ async def handle_voice_message(
     if backend_client.agent_api_url is None:
         logger.warning(
             "AGENT_API_URL not configured, cannot forward voice",
-            extra={"user_id": user_id},
+            extra={"request_id": request_id, "user_id": user_id},
         )
         await update.message.reply_text(MSG_AGENT_NOT_CONFIGURED)
         return
@@ -66,6 +69,7 @@ async def handle_voice_message(
         logger.info(
             "Voice file downloaded",
             extra={
+                "request_id": request_id,
                 "session_id": session_id,
                 "size_bytes": len(audio_bytes),
             },
@@ -76,7 +80,7 @@ async def handle_voice_message(
         mime_type = voice.mime_type or "audio/ogg"
 
         # 3. Forward to agent
-        result = await backend_client.forward_voice(session_id, audio_base64, mime_type)
+        result = await backend_client.forward_voice(session_id, audio_base64, mime_type, request_id)
 
         # 4. Reply to user
         response_text = result.get("response", "")
@@ -85,6 +89,16 @@ async def handle_voice_message(
 
         await update.message.reply_text(response_text)
 
+        latency_total_ms = int((time.monotonic() - start_time) * 1000)
+        logger.info(
+            "Reply sent",
+            extra={
+                "request_id": request_id,
+                "user_id": user_id,
+                "latency_total_ms": latency_total_ms,
+            },
+        )
+
     except ValueError as e:
         error_str = str(e)
         if "AGENT_API_URL is not configured" in error_str:
@@ -92,13 +106,23 @@ async def handle_voice_message(
         else:
             logger.error(
                 f"Voice forward error: {type(e).__name__}",
-                extra={"user_id": user_id, "error": error_str},
+                extra={
+                    "request_id": request_id,
+                    "user_id": user_id,
+                    "error_type": type(e).__name__,
+                    "error_message": error_str,
+                },
             )
             await update.message.reply_text(MSG_BACKEND_UNAVAILABLE)
 
     except Exception as e:
         logger.error(
             f"Voice handler error: {type(e).__name__}",
-            extra={"user_id": user_id, "error": str(e)},
+            extra={
+                "request_id": request_id,
+                "user_id": user_id,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+            },
         )
         await update.message.reply_text(MSG_BACKEND_UNAVAILABLE)
