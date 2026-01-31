@@ -28,32 +28,29 @@ class BackendClient:
         self.agent_api_url = agent_api_url
         self._client = httpx.AsyncClient(timeout=30.0)
 
-    async def forward_message(self, session_id: str, message: str) -> str:
+    async def _post_with_retry(
+        self, url: str, payload: dict, session_id: str, log_label: str
+    ) -> dict:
         """
-        Forward a message to the backend agent API.
+        POST JSON to a URL with retry logic.
 
         Args:
-            session_id: Session identifier (format: "tg_<telegram_user_id>")
-            message: User message text
+            url: Target URL
+            payload: JSON payload
+            session_id: Session ID for logging
+            log_label: Label for log messages (e.g. "message", "voice")
 
         Returns:
-            Response text from the backend
+            Parsed JSON response as dict
 
         Raises:
-            ValueError: If AGENT_API_URL is not configured or response is invalid
+            ValueError: If response is invalid
             httpx.HTTPError: If all retry attempts fail
         """
-        if self.agent_api_url is None:
-            raise ValueError("AGENT_API_URL is not configured")
-
-        url = f"{self.agent_api_url.rstrip('/')}/api/chat"
-        payload = {"session_id": session_id, "message": message}
-
         start_time = time.monotonic()
         last_exception: Optional[Exception] = None
 
         for attempt in range(MAX_ATTEMPTS):
-            # Check if we've exceeded total time budget
             elapsed = time.monotonic() - start_time
             if elapsed >= MAX_TOTAL_TIME:
                 logger.warning(
@@ -64,10 +61,9 @@ class BackendClient:
 
             try:
                 logger.info(
-                    f"Forwarding message to backend (attempt {attempt + 1}/{MAX_ATTEMPTS})",
+                    f"Forwarding {log_label} to backend (attempt {attempt + 1}/{MAX_ATTEMPTS})",
                     extra={
                         "session_id": session_id,
-                        "message_length": len(message),
                         "attempt": attempt + 1,
                     },
                 )
@@ -80,13 +76,13 @@ class BackendClient:
                     raise ValueError("Missing 'response' field in backend response")
 
                 logger.info(
-                    "Backend response received",
+                    f"Backend {log_label} response received",
                     extra={
                         "session_id": session_id,
                         "status_code": response.status_code,
                     },
                 )
-                return data["response"]
+                return data
 
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
                 last_exception = e
@@ -107,7 +103,6 @@ class BackendClient:
                         },
                     )
                 else:
-                    # Non-retryable HTTP error - raise immediately
                     logger.error(
                         f"Non-retryable HTTP error {e.response.status_code}",
                         extra={
@@ -118,17 +113,14 @@ class BackendClient:
                     raise
 
             except ValueError as e:
-                # Invalid JSON or missing response field - don't retry
                 logger.error(
                     f"Invalid backend response: {e}",
                     extra={"session_id": session_id},
                 )
                 raise
 
-            # Calculate backoff sleep: 1s, 2s, 4s (2^attempt)
             if attempt < MAX_ATTEMPTS - 1:
                 sleep_time = 2**attempt
-                # Check if sleeping would exceed time budget
                 remaining_time = MAX_TOTAL_TIME - (time.monotonic() - start_time)
                 if sleep_time > remaining_time:
                     logger.warning(
@@ -143,7 +135,6 @@ class BackendClient:
                 )
                 await asyncio.sleep(sleep_time)
 
-        # All retries exhausted
         if last_exception:
             logger.error(
                 f"All {MAX_ATTEMPTS} retry attempts failed",
@@ -152,6 +143,70 @@ class BackendClient:
             raise last_exception
 
         raise RuntimeError("Unexpected state: no exception but all retries failed")
+
+    async def forward_message(self, session_id: str, message: str) -> str:
+        """
+        Forward a text message to the backend agent API.
+
+        Args:
+            session_id: Session identifier (format: "tg_<telegram_user_id>")
+            message: User message text
+
+        Returns:
+            Response text from the backend
+
+        Raises:
+            ValueError: If AGENT_API_URL is not configured or response is invalid
+            httpx.HTTPError: If all retry attempts fail
+        """
+        if self.agent_api_url is None:
+            raise ValueError("AGENT_API_URL is not configured")
+
+        url = f"{self.agent_api_url.rstrip('/')}/api/chat"
+        payload = {"session_id": session_id, "message": message}
+
+        data = await self._post_with_retry(url, payload, session_id, "message")
+        return data["response"]
+
+    async def forward_voice(
+        self, session_id: str, audio_base64: str, mime_type: str = "audio/ogg"
+    ) -> dict:
+        """
+        Forward a voice message to the backend agent API.
+
+        Args:
+            session_id: Session identifier (format: "tg_<telegram_user_id>")
+            audio_base64: Base64-encoded audio bytes
+            mime_type: Audio MIME type (default: "audio/ogg")
+
+        Returns:
+            Dict with "response" and "transcription" keys
+
+        Raises:
+            ValueError: If AGENT_API_URL is not configured or response is invalid
+            httpx.HTTPError: If all retry attempts fail
+        """
+        if self.agent_api_url is None:
+            raise ValueError("AGENT_API_URL is not configured")
+
+        url = f"{self.agent_api_url.rstrip('/')}/api/voice"
+        payload = {
+            "session_id": session_id,
+            "audio_base64": audio_base64,
+            "mime_type": mime_type,
+        }
+
+        audio_size = len(audio_base64) * 3 // 4  # approximate decoded size
+        logger.info(
+            "Forwarding voice to backend",
+            extra={
+                "session_id": session_id,
+                "audio_size_bytes": audio_size,
+                "mime_type": mime_type,
+            },
+        )
+
+        return await self._post_with_retry(url, payload, session_id, "voice")
 
     async def close(self) -> None:
         """Close the HTTP client."""

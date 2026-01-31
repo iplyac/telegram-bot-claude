@@ -1,6 +1,12 @@
 #!/bin/bash
 # Production deployment script using Google Cloud Build
 # Recommended for Cloud Run deployments
+#
+# AGENT_API_URL Configuration:
+# Set AGENT_API_URL to the public URL of master-agent before deploying:
+#   AGENT_API_URL=https://master-agent-xxx.run.app ./deploy-bot.sh
+#
+# Without AGENT_API_URL, the bot will start but cannot forward messages.
 
 set -euo pipefail
 
@@ -48,6 +54,9 @@ ENV_VARS="LOG_LEVEL=${LOG_LEVEL:-INFO}"
 
 if [ -n "${AGENT_API_URL:-}" ]; then
     ENV_VARS="${ENV_VARS},AGENT_API_URL=${AGENT_API_URL}"
+    echo "AGENT_API_URL: configured"
+else
+    echo "WARNING: AGENT_API_URL not set. Bot will not forward messages."
 fi
 
 if [ -n "${TELEGRAM_WEBHOOK_URL:-}" ]; then
@@ -117,11 +126,41 @@ fi
 
 echo ""
 echo "=== Deployment complete ==="
-echo "Service URL:"
-gcloud run services describe "$SERVICE_NAME" \
+SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
     --project "$PROJECT_ID" \
     --region "$REGION" \
-    --format 'value(status.url)'
+    --format 'value(status.url)')
+echo "Service URL: $SERVICE_URL"
+
+echo ""
+echo "=== Setting up Telegram webhook ==="
+
+# Get bot token from Secret Manager
+BOT_TOKEN=$(gcloud secrets versions access latest --secret=TELEGRAM_BOT_TOKEN --project="$PROJECT_ID" 2>/dev/null | grep -oE '[0-9]+:[A-Za-z0-9_-]+')
+
+if [ -z "$BOT_TOKEN" ]; then
+    echo "WARNING: Could not retrieve bot token from Secret Manager. Webhook not set."
+else
+    # Derive webhook secret from bot token (sha256, first 32 hex chars)
+    WEBHOOK_SECRET=$(echo -n "$BOT_TOKEN" | sha256sum | cut -c1-32)
+
+    # Webhook URL
+    WEBHOOK_PATH="${TELEGRAM_WEBHOOK_PATH:-/telegram/webhook}"
+    WEBHOOK_URL="${SERVICE_URL}${WEBHOOK_PATH}"
+
+    echo "Webhook URL: $WEBHOOK_URL"
+
+    # Set webhook with secret_token
+    RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+        -H "Content-Type: application/json" \
+        -d "{\"url\": \"${WEBHOOK_URL}\", \"secret_token\": \"${WEBHOOK_SECRET}\"}")
+
+    if echo "$RESPONSE" | grep -q '"ok":true'; then
+        echo "Webhook set successfully"
+    else
+        echo "WARNING: Failed to set webhook: $RESPONSE"
+    fi
+fi
 
 echo ""
 echo "=== Deployment finished at $(date) ==="

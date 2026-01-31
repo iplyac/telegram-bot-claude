@@ -71,7 +71,12 @@ def get_bot_token() -> str:
 
 
 def get_agent_api_url() -> Optional[str]:
-    """Get AGENT_API_URL with sanitization. Returns None if not configured."""
+    """
+    Get AGENT_API_URL with sanitization.
+
+    Returns:
+        Agent API URL, or None if not configured.
+    """
     return sanitize_value(os.getenv("AGENT_API_URL"))
 
 

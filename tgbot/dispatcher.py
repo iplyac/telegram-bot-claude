@@ -8,6 +8,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 
 from tgbot.commands.start import StartCommand
 from tgbot.commands.test import TestCommand
+from tgbot.handlers.voice import handle_voice_message
 from tgbot.services.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,15 @@ def setup_handlers(
     # Register text message handler (non-command text messages)
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message)
+    )
+
+    # Create voice handler with closure over backend_client
+    async def _voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await handle_voice_message(update, context, backend_client)
+
+    # Register voice message handler (after text, before unknown command)
+    application.add_handler(
+        MessageHandler(filters.VOICE, _voice_handler)
     )
 
     # Register unknown command handler
