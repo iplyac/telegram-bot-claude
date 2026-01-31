@@ -48,8 +48,8 @@ steps:
 
         echo "Service URL: $${SERVICE_URL}"
 
-        # Get bot token from Secret Manager
-        BOT_TOKEN=$(gcloud secrets versions access latest --secret=TELEGRAM_BOT_TOKEN 2>/dev/null)
+        # Get bot token from Secret Manager (extract clean token format)
+        BOT_TOKEN=$(gcloud secrets versions access latest --secret=TELEGRAM_BOT_TOKEN 2>/dev/null | grep -oE '[0-9]+:[A-Za-z0-9_-]+' | head -1)
 
         if [ -z "$${BOT_TOKEN}" ]; then
           echo "WARNING: Could not retrieve bot token. Webhook not set."
