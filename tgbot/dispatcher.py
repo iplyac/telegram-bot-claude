@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -11,7 +11,7 @@ from tgbot.commands.start import StartCommand
 from tgbot.commands.test import TestCommand
 from tgbot.handlers.voice import handle_voice_message
 from tgbot.logging_config import generate_request_id
-from tgbot.services.backend_client import BackendClient
+from tgbot.services.backend_client import BackendClient, TelegramMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,45 @@ logger = logging.getLogger(__name__)
 MSG_AGENT_NOT_CONFIGURED = "AGENT_API_URL is not configured"
 MSG_BACKEND_UNAVAILABLE = "Backend unavailable, please try again later."
 MSG_UNKNOWN_COMMAND = "Unknown command. Use /start for help."
+
+
+def derive_conversation_id(update: Update) -> Tuple[str, TelegramMetadata]:
+    """
+    Derive conversation_id and metadata from Telegram update.
+
+    Args:
+        update: Telegram update object
+
+    Returns:
+        Tuple of (conversation_id, TelegramMetadata)
+
+    Conversation ID format:
+        - Private chat: tg_dm_{user_id}
+        - Group/Supergroup: tg_group_{chat_id}
+        - Unknown: tg_chat_{chat_id}
+    """
+    chat = update.effective_chat
+    user = update.effective_user
+
+    chat_id = chat.id if chat else 0
+    user_id = user.id if user else 0
+    chat_type = chat.type if chat else "unknown"
+
+    # Derive conversation_id based on chat type
+    if chat_type == "private":
+        conversation_id = f"tg_dm_{user_id}"
+    elif chat_type in ("group", "supergroup"):
+        conversation_id = f"tg_group_{chat_id}"
+    else:
+        conversation_id = f"tg_chat_{chat_id}"
+
+    metadata = TelegramMetadata(
+        chat_id=chat_id,
+        user_id=user_id,
+        chat_type=chat_type,
+    )
+
+    return conversation_id, metadata
 
 
 def setup_handlers(
@@ -90,15 +129,18 @@ async def _handle_text_message(
 
     start_time = time.monotonic()
     request_id = generate_request_id()
-    user_id = update.effective_user.id
     message_text = update.message.text
-    session_id = f"tg_{user_id}"
+
+    # Derive conversation_id and metadata
+    conversation_id, metadata = derive_conversation_id(update)
 
     logger.info(
         "Message received",
         extra={
             "request_id": request_id,
-            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "user_id": metadata.user_id,
+            "chat_type": metadata.chat_type,
             "update_id": update.update_id,
             "message_type": "text",
             "message_length": len(message_text),
@@ -109,14 +151,16 @@ async def _handle_text_message(
     if backend_client.agent_api_url is None:
         logger.warning(
             "AGENT_API_URL not configured, cannot forward message",
-            extra={"request_id": request_id, "user_id": user_id},
+            extra={"request_id": request_id, "conversation_id": conversation_id},
         )
         await update.message.reply_text(MSG_AGENT_NOT_CONFIGURED)
         return
 
     # Forward to backend
     try:
-        response = await backend_client.forward_message(session_id, message_text, request_id)
+        response = await backend_client.forward_message(
+            conversation_id, message_text, metadata, request_id
+        )
         await update.message.reply_text(response)
 
         latency_total_ms = int((time.monotonic() - start_time) * 1000)
@@ -124,7 +168,8 @@ async def _handle_text_message(
             "Reply sent",
             extra={
                 "request_id": request_id,
-                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "user_id": metadata.user_id,
                 "latency_total_ms": latency_total_ms,
             },
         )
@@ -133,7 +178,8 @@ async def _handle_text_message(
             f"Backend error: {type(e).__name__}",
             extra={
                 "request_id": request_id,
-                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "user_id": metadata.user_id,
                 "error_type": type(e).__name__,
                 "error_message": str(e),
             },

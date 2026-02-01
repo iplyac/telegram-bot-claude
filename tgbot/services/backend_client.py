@@ -3,7 +3,8 @@
 import asyncio
 import logging
 import time
-from typing import Optional
+from dataclasses import dataclass, asdict
+from typing import Optional, Any
 
 import httpx
 
@@ -13,6 +14,19 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
 MAX_TOTAL_TIME = 30.0  # seconds
 RETRYABLE_STATUS_CODES = {502, 503, 504}
+
+
+@dataclass
+class TelegramMetadata:
+    """Metadata about the Telegram message context."""
+
+    chat_id: int
+    user_id: int
+    chat_type: str  # "private", "group", "supergroup", or "unknown"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return asdict(self)
 
 
 class BackendClient:
@@ -170,13 +184,20 @@ class BackendClient:
 
         raise RuntimeError("Unexpected state: no exception but all retries failed")
 
-    async def forward_message(self, session_id: str, message: str, request_id: str = "") -> str:
+    async def forward_message(
+        self,
+        conversation_id: str,
+        message: str,
+        metadata: Optional[TelegramMetadata] = None,
+        request_id: str = "",
+    ) -> str:
         """
         Forward a text message to the backend agent API.
 
         Args:
-            session_id: Session identifier (format: "tg_<telegram_user_id>")
+            conversation_id: Conversation identifier (format: "tg_dm_{user_id}" or "tg_group_{chat_id}")
             message: User message text
+            metadata: Telegram metadata (chat_id, user_id, chat_type)
             request_id: Correlation ID for logging
 
         Returns:
@@ -190,21 +211,33 @@ class BackendClient:
             raise ValueError("AGENT_API_URL is not configured")
 
         url = f"{self.agent_api_url.rstrip('/')}/api/chat"
-        payload = {"session_id": session_id, "message": message}
+        payload: dict[str, Any] = {
+            "conversation_id": conversation_id,
+            "message": message,
+        }
 
-        data = await self._post_with_retry(url, payload, session_id, "message", request_id)
+        if metadata:
+            payload["metadata"] = {"telegram": metadata.to_dict()}
+
+        data = await self._post_with_retry(url, payload, conversation_id, "message", request_id)
         return data["response"]
 
     async def forward_voice(
-        self, session_id: str, audio_base64: str, mime_type: str = "audio/ogg", request_id: str = ""
+        self,
+        conversation_id: str,
+        audio_base64: str,
+        mime_type: str = "audio/ogg",
+        metadata: Optional[TelegramMetadata] = None,
+        request_id: str = "",
     ) -> dict:
         """
         Forward a voice message to the backend agent API.
 
         Args:
-            session_id: Session identifier (format: "tg_<telegram_user_id>")
+            conversation_id: Conversation identifier (format: "tg_dm_{user_id}" or "tg_group_{chat_id}")
             audio_base64: Base64-encoded audio bytes
             mime_type: Audio MIME type (default: "audio/ogg")
+            metadata: Telegram metadata (chat_id, user_id, chat_type)
             request_id: Correlation ID for logging
 
         Returns:
@@ -218,24 +251,27 @@ class BackendClient:
             raise ValueError("AGENT_API_URL is not configured")
 
         url = f"{self.agent_api_url.rstrip('/')}/api/voice"
-        payload = {
-            "session_id": session_id,
+        payload: dict[str, Any] = {
+            "conversation_id": conversation_id,
             "audio_base64": audio_base64,
             "mime_type": mime_type,
         }
+
+        if metadata:
+            payload["metadata"] = {"telegram": metadata.to_dict()}
 
         audio_size = len(audio_base64) * 3 // 4  # approximate decoded size
         logger.info(
             "Forwarding voice to backend",
             extra={
                 "request_id": request_id,
-                "session_id": session_id,
+                "conversation_id": conversation_id,
                 "audio_size_bytes": audio_size,
                 "mime_type": mime_type,
             },
         )
 
-        return await self._post_with_retry(url, payload, session_id, "voice", request_id)
+        return await self._post_with_retry(url, payload, conversation_id, "voice", request_id)
 
     async def close(self) -> None:
         """Close the HTTP client."""

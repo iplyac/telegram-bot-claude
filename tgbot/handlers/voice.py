@@ -8,13 +8,44 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from tgbot.logging_config import generate_request_id
-from tgbot.services.backend_client import BackendClient
+from tgbot.services.backend_client import BackendClient, TelegramMetadata
 
 logger = logging.getLogger(__name__)
 
 # Standard user messages (same as text handler)
 MSG_AGENT_NOT_CONFIGURED = "AGENT_API_URL is not configured"
 MSG_BACKEND_UNAVAILABLE = "Backend unavailable, please try again later."
+
+
+def _derive_conversation_id(update: Update) -> tuple[str, TelegramMetadata]:
+    """
+    Derive conversation_id and metadata from Telegram update.
+
+    Returns:
+        Tuple of (conversation_id, TelegramMetadata)
+    """
+    chat = update.effective_chat
+    user = update.effective_user
+
+    chat_id = chat.id if chat else 0
+    user_id = user.id if user else 0
+    chat_type = chat.type if chat else "unknown"
+
+    # Derive conversation_id based on chat type
+    if chat_type == "private":
+        conversation_id = f"tg_dm_{user_id}"
+    elif chat_type in ("group", "supergroup"):
+        conversation_id = f"tg_group_{chat_id}"
+    else:
+        conversation_id = f"tg_chat_{chat_id}"
+
+    metadata = TelegramMetadata(
+        chat_id=chat_id,
+        user_id=user_id,
+        chat_type=chat_type,
+    )
+
+    return conversation_id, metadata
 
 
 async def handle_voice_message(
@@ -38,14 +69,17 @@ async def handle_voice_message(
 
     start_time = time.monotonic()
     request_id = generate_request_id()
-    user_id = update.effective_user.id
-    session_id = f"tg_{user_id}"
+
+    # Derive conversation_id and metadata
+    conversation_id, metadata = _derive_conversation_id(update)
 
     logger.info(
         "Message received",
         extra={
             "request_id": request_id,
-            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "user_id": metadata.user_id,
+            "chat_type": metadata.chat_type,
             "update_id": update.update_id,
             "message_type": "voice",
             "audio_duration_seconds": voice.duration,
@@ -56,7 +90,7 @@ async def handle_voice_message(
     if backend_client.agent_api_url is None:
         logger.warning(
             "AGENT_API_URL not configured, cannot forward voice",
-            extra={"request_id": request_id, "user_id": user_id},
+            extra={"request_id": request_id, "conversation_id": conversation_id},
         )
         await update.message.reply_text(MSG_AGENT_NOT_CONFIGURED)
         return
@@ -70,7 +104,7 @@ async def handle_voice_message(
             "Voice file downloaded",
             extra={
                 "request_id": request_id,
-                "session_id": session_id,
+                "conversation_id": conversation_id,
                 "size_bytes": len(audio_bytes),
             },
         )
@@ -80,7 +114,9 @@ async def handle_voice_message(
         mime_type = voice.mime_type or "audio/ogg"
 
         # 3. Forward to agent
-        result = await backend_client.forward_voice(session_id, audio_base64, mime_type, request_id)
+        result = await backend_client.forward_voice(
+            conversation_id, audio_base64, mime_type, metadata, request_id
+        )
 
         # 4. Reply to user
         response_text = result.get("response", "")
@@ -94,7 +130,8 @@ async def handle_voice_message(
             "Reply sent",
             extra={
                 "request_id": request_id,
-                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "user_id": metadata.user_id,
                 "latency_total_ms": latency_total_ms,
             },
         )
@@ -108,7 +145,8 @@ async def handle_voice_message(
                 f"Voice forward error: {type(e).__name__}",
                 extra={
                     "request_id": request_id,
-                    "user_id": user_id,
+                    "conversation_id": conversation_id,
+                    "user_id": metadata.user_id,
                     "error_type": type(e).__name__,
                     "error_message": error_str,
                 },
@@ -120,7 +158,8 @@ async def handle_voice_message(
             f"Voice handler error: {type(e).__name__}",
             extra={
                 "request_id": request_id,
-                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "user_id": metadata.user_id,
                 "error_type": type(e).__name__,
                 "error_message": str(e),
             },
