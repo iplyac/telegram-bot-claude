@@ -9,6 +9,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 
 from tgbot.commands.start import StartCommand
 from tgbot.commands.test import TestCommand
+from tgbot.commands.sessioninfo import SessionInfoCommand
 from tgbot.handlers.voice import handle_voice_message
 from tgbot.logging_config import generate_request_id
 from tgbot.services.backend_client import BackendClient, TelegramMetadata
@@ -80,10 +81,12 @@ def setup_handlers(
     # Create command instances
     start_cmd = StartCommand()
     test_cmd = TestCommand(project_id, region, service_name)
+    sessioninfo_cmd = SessionInfoCommand(backend_client.agent_api_url)
 
     # Register command handlers
     application.add_handler(CommandHandler(start_cmd.name, start_cmd.handle))
     application.add_handler(CommandHandler(test_cmd.name, test_cmd.handle))
+    application.add_handler(CommandHandler(sessioninfo_cmd.name, sessioninfo_cmd.handle))
 
     # Create message handler with closure over backend_client
     async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
