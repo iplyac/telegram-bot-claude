@@ -16,26 +16,46 @@ steps:
       - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}'
       - '--all-tags'
 
-  # Step 3: Deploy to Cloud Run
+  # Step 3: Deploy to Cloud Run with dynamic URLs
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: 'gcloud'
+    entrypoint: 'bash'
     args:
-      - 'run'
-      - 'deploy'
-      - '${_SERVICE_NAME}'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
-      - '--region'
-      - '${_REGION}'
-      - '--platform'
-      - 'managed'
-      - '--allow-unauthenticated'
-      - '--set-env-vars'
-      - 'AGENT_API_URL=${_AGENT_API_URL},LOG_LEVEL=INFO'
-      - '--set-secrets'
-      - 'TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest'
+      - '-c'
+      - |
+        # Get master-agent URL dynamically
+        AGENT_URL=$(gcloud run services describe ${_MASTER_AGENT_SERVICE} \
+          --region=${_REGION} \
+          --format='value(status.url)' 2>/dev/null || echo "")
 
-  # Step 4: Setup Telegram webhook
+        if [ -z "$${AGENT_URL}" ]; then
+          echo "WARNING: master-agent service not found, using empty AGENT_API_URL"
+          AGENT_URL=""
+        fi
+        echo "Master agent URL: $${AGENT_URL}"
+
+        # Deploy service
+        gcloud run deploy ${_SERVICE_NAME} \
+          --image gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA \
+          --region ${_REGION} \
+          --platform managed \
+          --allow-unauthenticated \
+          --set-secrets TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest \
+          --set-env-vars "LOG_LEVEL=INFO,AGENT_API_URL=$${AGENT_URL}"
+
+        # Get deployed service URL
+        SERVICE_URL=$(gcloud run services describe ${_SERVICE_NAME} \
+          --region=${_REGION} \
+          --format='value(status.url)')
+        echo "Service URL: $${SERVICE_URL}"
+
+        # Update with TELEGRAM_WEBHOOK_URL (triggers new revision but quick)
+        gcloud run services update ${_SERVICE_NAME} \
+          --region ${_REGION} \
+          --update-env-vars "TELEGRAM_WEBHOOK_URL=$${SERVICE_URL}"
+
+        echo "Deploy complete with dynamic URLs"
+
+  # Step 4: Setup Telegram webhook via API
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
@@ -82,7 +102,7 @@ steps:
 substitutions:
   _REGION: 'europe-west4'
   _SERVICE_NAME: 'telegram-bot'
-  _AGENT_API_URL: ''
+  _MASTER_AGENT_SERVICE: 'master-agent'
 
 # Build options
 options:
