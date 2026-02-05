@@ -1,0 +1,180 @@
+"""Image/photo message handler."""
+
+import base64
+import logging
+import time
+
+from telegram import Update
+from telegram.ext import ContextTypes
+
+from tgbot.logging_config import generate_request_id
+from tgbot.services.backend_client import BackendClient, TelegramMetadata
+
+logger = logging.getLogger(__name__)
+
+# Standard user messages (same as text handler)
+MSG_AGENT_NOT_CONFIGURED = "AGENT_API_URL is not configured"
+MSG_BACKEND_UNAVAILABLE = "Backend unavailable, please try again later."
+
+# Default prompt when no caption provided
+DEFAULT_IMAGE_PROMPT = "What is in this image?"
+
+
+def _derive_conversation_id(update: Update) -> tuple[str, TelegramMetadata]:
+    """
+    Derive conversation_id and metadata from Telegram update.
+
+    Returns:
+        Tuple of (conversation_id, TelegramMetadata)
+    """
+    chat = update.effective_chat
+    user = update.effective_user
+
+    chat_id = chat.id if chat else 0
+    user_id = user.id if user else 0
+    chat_type = chat.type if chat else "unknown"
+
+    # Derive conversation_id based on chat type
+    if chat_type == "private":
+        conversation_id = f"tg_dm_{user_id}"
+    elif chat_type in ("group", "supergroup"):
+        conversation_id = f"tg_group_{chat_id}"
+    else:
+        conversation_id = f"tg_chat_{chat_id}"
+
+    metadata = TelegramMetadata(
+        chat_id=chat_id,
+        user_id=user_id,
+        chat_type=chat_type,
+    )
+
+    return conversation_id, metadata
+
+
+async def handle_photo_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    backend_client: BackendClient,
+) -> None:
+    """
+    Handle incoming photo messages:
+    1. Download photo from Telegram (largest size)
+    2. Base64-encode the image
+    3. Forward to AI Agent /api/image
+    4. Reply with agent response
+    """
+    if update.effective_user is None or update.message is None:
+        return
+
+    photo_list = update.message.photo
+    if not photo_list:
+        return
+
+    start_time = time.monotonic()
+    request_id = generate_request_id()
+
+    # Derive conversation_id and metadata
+    conversation_id, metadata = _derive_conversation_id(update)
+
+    # Get largest photo size
+    photo = photo_list[-1]
+
+    logger.info(
+        "Message received",
+        extra={
+            "request_id": request_id,
+            "conversation_id": conversation_id,
+            "user_id": metadata.user_id,
+            "chat_type": metadata.chat_type,
+            "update_id": update.update_id,
+            "message_type": "photo",
+            "photo_width": photo.width,
+            "photo_height": photo.height,
+            "photo_file_size": photo.file_size,
+        },
+    )
+
+    # Check if backend is configured
+    if backend_client.agent_api_url is None:
+        logger.warning(
+            "AGENT_API_URL not configured, cannot forward photo",
+            extra={"request_id": request_id, "conversation_id": conversation_id},
+        )
+        await update.message.reply_text(MSG_AGENT_NOT_CONFIGURED)
+        return
+
+    try:
+        # 1. Download photo from Telegram
+        photo_file = await context.bot.get_file(photo.file_id)
+        image_bytes = await photo_file.download_as_bytearray()
+
+        logger.info(
+            "Photo file downloaded",
+            extra={
+                "request_id": request_id,
+                "conversation_id": conversation_id,
+                "size_bytes": len(image_bytes),
+            },
+        )
+
+        # 2. Base64-encode
+        image_base64 = base64.b64encode(bytes(image_bytes)).decode("utf-8")
+
+        # 3. Determine MIME type (Telegram photos are typically JPEG)
+        mime_type = "image/jpeg"
+
+        # 4. Use caption as prompt or default
+        prompt = update.message.caption or DEFAULT_IMAGE_PROMPT
+
+        # 5. Forward to agent
+        result = await backend_client.forward_image(
+            conversation_id, image_base64, mime_type, prompt, metadata, request_id
+        )
+
+        # 6. Reply to user
+        response_text = result.get("response", "")
+        if not response_text:
+            response_text = "Could not process image."
+
+        await update.message.reply_text(response_text)
+
+        latency_total_ms = int((time.monotonic() - start_time) * 1000)
+        logger.info(
+            "Reply sent",
+            extra={
+                "request_id": request_id,
+                "conversation_id": conversation_id,
+                "user_id": metadata.user_id,
+                "latency_total_ms": latency_total_ms,
+            },
+        )
+
+    except ValueError as e:
+        error_str = str(e)
+        if "AGENT_API_URL is not configured" in error_str:
+            await update.message.reply_text(MSG_AGENT_NOT_CONFIGURED)
+        else:
+            logger.error(
+                f"Image forward error: {type(e).__name__}",
+                extra={
+                    "request_id": request_id,
+                    "conversation_id": conversation_id,
+                    "user_id": metadata.user_id,
+                    "error_type": type(e).__name__,
+                    "error_message": error_str,
+                },
+            )
+            await update.message.reply_text(MSG_BACKEND_UNAVAILABLE)
+
+    except Exception as e:
+        logger.error(
+            f"Image handler error: {type(e).__name__}",
+            extra={
+                "request_id": request_id,
+                "conversation_id": conversation_id,
+                "user_id": metadata.user_id,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+            },
+        )
+        await update.message.reply_text(MSG_BACKEND_UNAVAILABLE)

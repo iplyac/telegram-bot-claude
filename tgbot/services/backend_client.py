@@ -273,6 +273,61 @@ class BackendClient:
 
         return await self._post_with_retry(url, payload, conversation_id, "voice", request_id)
 
+    async def forward_image(
+        self,
+        conversation_id: str,
+        image_base64: str,
+        mime_type: str = "image/jpeg",
+        prompt: str = "What is in this image?",
+        metadata: Optional[TelegramMetadata] = None,
+        request_id: str = "",
+    ) -> dict:
+        """
+        Forward an image to the backend agent API.
+
+        Args:
+            conversation_id: Conversation identifier (format: "tg_dm_{user_id}" or "tg_group_{chat_id}")
+            image_base64: Base64-encoded image bytes
+            mime_type: Image MIME type (default: "image/jpeg")
+            prompt: Question or instruction for image analysis
+            metadata: Telegram metadata (chat_id, user_id, chat_type)
+            request_id: Correlation ID for logging
+
+        Returns:
+            Dict with "response" and optionally "description" keys
+
+        Raises:
+            ValueError: If AGENT_API_URL is not configured or response is invalid
+            httpx.HTTPError: If all retry attempts fail
+        """
+        if self.agent_api_url is None:
+            raise ValueError("AGENT_API_URL is not configured")
+
+        url = f"{self.agent_api_url.rstrip('/')}/api/image"
+        payload: dict[str, Any] = {
+            "conversation_id": conversation_id,
+            "image_base64": image_base64,
+            "mime_type": mime_type,
+            "prompt": prompt,
+        }
+
+        if metadata:
+            payload["metadata"] = {"telegram": metadata.to_dict()}
+
+        image_size = len(image_base64) * 3 // 4  # approximate decoded size
+        logger.info(
+            "Forwarding image to backend",
+            extra={
+                "request_id": request_id,
+                "conversation_id": conversation_id,
+                "image_size_bytes": image_size,
+                "mime_type": mime_type,
+                "prompt_length": len(prompt),
+            },
+        )
+
+        return await self._post_with_retry(url, payload, conversation_id, "image", request_id)
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self._client.aclose()

@@ -11,6 +11,7 @@ from tgbot.commands.start import StartCommand
 from tgbot.commands.test import TestCommand
 from tgbot.commands.sessioninfo import SessionInfoCommand
 from tgbot.handlers.voice import handle_voice_message
+from tgbot.handlers.image import handle_photo_message
 from tgbot.logging_config import generate_request_id
 from tgbot.services.backend_client import BackendClient, TelegramMetadata
 
@@ -104,6 +105,15 @@ def setup_handlers(
     # Register voice message handler (after text, before unknown command)
     application.add_handler(
         MessageHandler(filters.VOICE, _voice_handler)
+    )
+
+    # Create photo handler with closure over backend_client
+    async def _photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await handle_photo_message(update, context, backend_client)
+
+    # Register photo message handler
+    application.add_handler(
+        MessageHandler(filters.PHOTO, _photo_handler)
     )
 
     # Register unknown command handler
