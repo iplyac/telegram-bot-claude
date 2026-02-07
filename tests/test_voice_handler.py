@@ -148,6 +148,6 @@ async def test_voice_handler_base64_encoding(mock_voice_update, mock_context):
 
         # Verify forward_voice was called with correct base64
         call_args = mock_forward.call_args
-        assert call_args[0][0] == "tg_123456"  # session_id
+        assert call_args[0][0] == "tg_chat_123456"  # conversation_id (format: tg_chat_{chat_id})
         assert call_args[0][1] == expected_b64  # audio_base64
         assert call_args[0][2] == "audio/ogg"  # mime_type
