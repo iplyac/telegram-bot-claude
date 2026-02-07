@@ -10,6 +10,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from tgbot.commands.start import StartCommand
 from tgbot.commands.test import TestCommand
 from tgbot.commands.sessioninfo import SessionInfoCommand
+from tgbot.commands.promptreload import PromptReloadCommand
 from tgbot.handlers.voice import handle_voice_message
 from tgbot.handlers.image import handle_photo_message
 from tgbot.logging_config import generate_request_id
@@ -83,11 +84,13 @@ def setup_handlers(
     start_cmd = StartCommand()
     test_cmd = TestCommand(project_id, region, service_name)
     sessioninfo_cmd = SessionInfoCommand(backend_client.agent_api_url)
+    promptreload_cmd = PromptReloadCommand(backend_client.agent_api_url)
 
     # Register command handlers
     application.add_handler(CommandHandler(start_cmd.name, start_cmd.handle))
     application.add_handler(CommandHandler(test_cmd.name, test_cmd.handle))
     application.add_handler(CommandHandler(sessioninfo_cmd.name, sessioninfo_cmd.handle))
+    application.add_handler(CommandHandler(promptreload_cmd.name, promptreload_cmd.handle))
 
     # Create message handler with closure over backend_client
     async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
