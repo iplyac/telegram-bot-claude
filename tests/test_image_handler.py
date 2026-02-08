@@ -1,9 +1,14 @@
 """Tests for image/photo message handler."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+import base64
+import io
 
-from tgbot.handlers.image import handle_photo_message, DEFAULT_IMAGE_PROMPT
+import pytest
+from unittest.mock import MagicMock, AsyncMock, patch, ANY
+
+from telegram import InputFile
+
+from tgbot.handlers.image import handle_photo_message, DEFAULT_IMAGE_PROMPT, MIME_TO_EXT
 from tgbot.services.backend_client import BackendClient
 
 
@@ -19,6 +24,7 @@ def mock_update_with_caption():
     update.message = MagicMock()
     update.message.caption = "What breed is this dog?"
     update.message.reply_text = AsyncMock()
+    update.message.reply_photo = AsyncMock()
     update.update_id = 987654321
 
     # Mock photo list with different sizes
@@ -50,6 +56,7 @@ def mock_update_no_caption():
     update.message = MagicMock()
     update.message.caption = None
     update.message.reply_text = AsyncMock()
+    update.message.reply_photo = AsyncMock()
     update.update_id = 987654321
 
     photo = MagicMock()
@@ -194,3 +201,95 @@ async def test_download_failure(mock_update_with_caption, mock_context):
     mock_update_with_caption.message.reply_text.assert_called_once_with(
         "Backend unavailable, please try again later."
     )
+
+
+@pytest.mark.asyncio
+async def test_photo_with_processed_image(mock_update_with_caption, mock_context):
+    """When response contains processed_image_base64, bot should reply with photo."""
+    backend_client = BackendClient(agent_api_url="https://example.com")
+
+    # Mock file download
+    mock_file = MagicMock()
+    mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image data"))
+    mock_context.bot.get_file.return_value = mock_file
+
+    fake_processed_image = base64.b64encode(b"processed image bytes").decode("utf-8")
+
+    with patch.object(
+        backend_client,
+        "forward_image",
+        new_callable=AsyncMock,
+        return_value={
+            "response": "Here is your image with the background removed.",
+            "processed_image_base64": fake_processed_image,
+            "processed_image_mime_type": "image/png",
+        },
+    ):
+        await handle_photo_message(mock_update_with_caption, mock_context, backend_client)
+
+        # Should reply with photo, not text
+        mock_update_with_caption.message.reply_photo.assert_called_once()
+        mock_update_with_caption.message.reply_text.assert_not_called()
+
+        # Verify caption
+        call_kwargs = mock_update_with_caption.message.reply_photo.call_args
+        assert call_kwargs.kwargs["caption"] == "Here is your image with the background removed."
+
+
+@pytest.mark.asyncio
+async def test_photo_without_processed_image(mock_update_with_caption, mock_context):
+    """When response has null processed_image_base64, bot should reply with text."""
+    backend_client = BackendClient(agent_api_url="https://example.com")
+
+    # Mock file download
+    mock_file = MagicMock()
+    mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image data"))
+    mock_context.bot.get_file.return_value = mock_file
+
+    with patch.object(
+        backend_client,
+        "forward_image",
+        new_callable=AsyncMock,
+        return_value={
+            "response": "This image shows a cat.",
+            "processed_image_base64": None,
+            "processed_image_mime_type": None,
+        },
+    ):
+        await handle_photo_message(mock_update_with_caption, mock_context, backend_client)
+
+        # Should reply with text, not photo
+        mock_update_with_caption.message.reply_text.assert_called_once_with("This image shows a cat.")
+        mock_update_with_caption.message.reply_photo.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_photo_processed_image_caption_truncated(mock_update_with_caption, mock_context):
+    """Caption should be truncated to 1024 chars for processed image replies."""
+    backend_client = BackendClient(agent_api_url="https://example.com")
+
+    # Mock file download
+    mock_file = MagicMock()
+    mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image data"))
+    mock_context.bot.get_file.return_value = mock_file
+
+    long_response = "A" * 2000
+    fake_processed_image = base64.b64encode(b"processed image bytes").decode("utf-8")
+
+    with patch.object(
+        backend_client,
+        "forward_image",
+        new_callable=AsyncMock,
+        return_value={
+            "response": long_response,
+            "processed_image_base64": fake_processed_image,
+            "processed_image_mime_type": "image/jpeg",
+        },
+    ):
+        await handle_photo_message(mock_update_with_caption, mock_context, backend_client)
+
+        mock_update_with_caption.message.reply_photo.assert_called_once()
+        call_kwargs = mock_update_with_caption.message.reply_photo.call_args
+        caption = call_kwargs.kwargs["caption"]
+        assert len(caption) == 1024
+        assert caption == "A" * 1024

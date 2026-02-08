@@ -1,10 +1,11 @@
 """Image/photo message handler."""
 
 import base64
+import io
 import logging
 import time
 
-from telegram import Update
+from telegram import InputFile, Update
 from telegram.ext import ContextTypes
 
 from tgbot.logging_config import generate_request_id
@@ -18,6 +19,14 @@ MSG_BACKEND_UNAVAILABLE = "Backend unavailable, please try again later."
 
 # Default prompt when no caption provided
 DEFAULT_IMAGE_PROMPT = "What is in this image?"
+
+# Mapping MIME types to file extensions for Telegram
+MIME_TO_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
 
 
 def _derive_conversation_id(update: Update) -> tuple[str, TelegramMetadata]:
@@ -136,7 +145,19 @@ async def handle_photo_message(
         if not response_text:
             response_text = "Could not process image."
 
-        await update.message.reply_text(response_text)
+        # Check if agent returned a processed image
+        processed_image_b64 = result.get("processed_image_base64")
+        processed_mime = result.get("processed_image_mime_type")
+
+        if processed_image_b64 and processed_mime:
+            image_bytes = base64.b64decode(processed_image_b64)
+            ext = MIME_TO_EXT.get(processed_mime, "png")
+            await update.message.reply_photo(
+                photo=InputFile(io.BytesIO(image_bytes), filename=f"processed.{ext}"),
+                caption=response_text[:1024] if response_text else None,
+            )
+        else:
+            await update.message.reply_text(response_text)
 
         latency_total_ms = int((time.monotonic() - start_time) * 1000)
         logger.info(
