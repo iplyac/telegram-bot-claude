@@ -43,7 +43,8 @@ class BackendClient:
         self._client = httpx.AsyncClient(timeout=30.0)
 
     async def _post_with_retry(
-        self, url: str, payload: dict, session_id: str, log_label: str, request_id: str = ""
+        self, url: str, payload: dict, session_id: str, log_label: str, request_id: str = "",
+        timeout: Optional[float] = None, max_total_time: Optional[float] = None,
     ) -> dict:
         """
         POST JSON to a URL with retry logic.
@@ -53,6 +54,8 @@ class BackendClient:
             payload: JSON payload
             session_id: Session ID for logging
             log_label: Label for log messages (e.g. "message", "voice")
+            timeout: Per-request timeout override (default: client timeout)
+            max_total_time: Total retry budget override (default: MAX_TOTAL_TIME)
 
         Returns:
             Parsed JSON response as dict
@@ -61,12 +64,13 @@ class BackendClient:
             ValueError: If response is invalid
             httpx.HTTPError: If all retry attempts fail
         """
+        effective_max_total_time = max_total_time if max_total_time is not None else MAX_TOTAL_TIME
         start_time = time.monotonic()
         last_exception: Optional[Exception] = None
 
         for attempt in range(MAX_ATTEMPTS):
             elapsed = time.monotonic() - start_time
-            if elapsed >= MAX_TOTAL_TIME:
+            if elapsed >= effective_max_total_time:
                 logger.warning(
                     f"Retry budget exhausted after {elapsed:.1f}s",
                     extra={"session_id": session_id, "attempts": attempt},
@@ -87,7 +91,7 @@ class BackendClient:
                     },
                 )
 
-                response = await self._client.post(url, json=payload)
+                response = await self._client.post(url, json=payload, timeout=timeout)
                 response.raise_for_status()
 
                 data = response.json()
@@ -156,7 +160,7 @@ class BackendClient:
 
             if attempt < MAX_ATTEMPTS - 1:
                 sleep_time = 2**attempt
-                remaining_time = MAX_TOTAL_TIME - (time.monotonic() - start_time)
+                remaining_time = effective_max_total_time - (time.monotonic() - start_time)
                 if sleep_time > remaining_time:
                     logger.warning(
                         f"Skipping sleep ({sleep_time}s) - would exceed time budget",
@@ -326,7 +330,10 @@ class BackendClient:
             },
         )
 
-        return await self._post_with_retry(url, payload, conversation_id, "image", request_id)
+        return await self._post_with_retry(
+            url, payload, conversation_id, "image", request_id,
+            timeout=120.0, max_total_time=180.0,
+        )
 
     async def close(self) -> None:
         """Close the HTTP client."""

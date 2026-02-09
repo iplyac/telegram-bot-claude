@@ -75,6 +75,7 @@ def mock_context():
     context = MagicMock()
     context.bot = MagicMock()
     context.bot.get_file = AsyncMock()
+    context.bot.send_chat_action = AsyncMock()
     return context
 
 

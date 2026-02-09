@@ -6,6 +6,7 @@ import logging
 import time
 
 from telegram import InputFile, Update
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from tgbot.logging_config import generate_request_id
@@ -135,7 +136,12 @@ async def handle_photo_message(
         # 4. Use caption as prompt or default
         prompt = update.message.caption or DEFAULT_IMAGE_PROMPT
 
-        # 5. Forward to agent
+        # 5. Send typing indicator while waiting for agent
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id, action=ChatAction.TYPING
+        )
+
+        # 6. Forward to agent
         result = await backend_client.forward_image(
             conversation_id, image_base64, mime_type, prompt, metadata, request_id
         )
