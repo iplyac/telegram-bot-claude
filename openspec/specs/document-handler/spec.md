@@ -70,16 +70,15 @@ The system SHALL refuse to process document messages and reply with the standard
 - **THEN** the bot replies with "AGENT_API_URL is not configured" and does not attempt any network call
 
 ### Requirement: Processing summary message is formatted
-After a successful document processing response, the system SHALL send a formatted text message to the user that includes: the original filename, the number of pages (if available), the number of tables found (if available), the number of images found (if available), and the processing time in seconds (if available). Fields not present in the metadata SHALL be omitted from the summary.
+After a successful document processing response, the system SHALL send a formatted text message to the user that includes: the original filename, the number of pages (if available), the number of tables found (if available), the number of images found (if available), the processing time in seconds (if available), and the AI-generated document description (if present in the response). Fields not present in the metadata or response SHALL be omitted from the summary.
 
-#### Scenario: Full metadata available
-- **WHEN** master-agent returns metadata with pages=12, tables_found=3, images_found=5, processing_time_ms=15400
-- **THEN** the bot sends a message such as:
-  ```
-  Document processed: report.pdf
-  Pages: 12 | Tables: 3 | Images: 5
-  Processing time: 15.4s
-  ```
+#### Scenario: Full metadata and summary available
+- **WHEN** master-agent returns full metadata and a non-empty `summary`
+- **THEN** the bot sends a message that includes stats (pages, tables, images, time) followed by the summary text
+
+#### Scenario: Summary absent
+- **WHEN** master-agent returns metadata but `summary` is null or absent
+- **THEN** the bot sends the stats message without a summary section
 
 #### Scenario: Partial metadata available
 - **WHEN** master-agent returns metadata with only pages=5 and no tables_found or images_found

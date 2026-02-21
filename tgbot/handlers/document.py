@@ -149,6 +149,9 @@ async def handle_document_message(
             summary_lines.append(" | ".join(details))
         if meta.get("processing_time_ms") is not None:
             summary_lines.append(f"Processing time: {meta['processing_time_ms'] / 1000:.1f}s")
+        ai_summary = result.get("summary")
+        if ai_summary:
+            summary_lines.append(f"\n{ai_summary}")
         if not content:
             summary_lines.append("No content extracted.")
 

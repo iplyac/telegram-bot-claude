@@ -331,3 +331,47 @@ async def test_md_filename_derived_from_original(mock_update, mock_context, mock
 
         doc_kwargs = mock_update.message.reply_document.call_args[1]
         assert doc_kwargs["filename"] == "my_report.md"
+
+
+@pytest.mark.asyncio
+async def test_summary_included_in_message_when_present(mock_update, mock_context):
+    """AI summary is appended to the text message when present in response."""
+    backend_client = BackendClient(agent_api_url="https://example.com")
+
+    with patch.object(
+        backend_client,
+        "forward_document",
+        new_callable=AsyncMock,
+        return_value={
+            "response": "# Content",
+            "metadata": {"format": "markdown", "pages": 5},
+            "summary": "This document covers quarterly financial results for 2024.",
+        },
+    ):
+        await handle_document_message(mock_update, mock_context, backend_client)
+
+        message_text = mock_update.message.reply_text.call_args[0][0]
+        assert "This document covers quarterly financial results for 2024." in message_text
+
+
+@pytest.mark.asyncio
+async def test_summary_absent_when_null(mock_update, mock_context):
+    """No summary section in message when summary is null."""
+    backend_client = BackendClient(agent_api_url="https://example.com")
+
+    with patch.object(
+        backend_client,
+        "forward_document",
+        new_callable=AsyncMock,
+        return_value={
+            "response": "# Content",
+            "metadata": {"format": "markdown", "pages": 5},
+            "summary": None,
+        },
+    ):
+        await handle_document_message(mock_update, mock_context, backend_client)
+
+        message_text = mock_update.message.reply_text.call_args[0][0]
+        # Should still have the stats but no spurious None or empty summary line
+        assert "Pages: 5" in message_text
+        assert "None" not in message_text
