@@ -7,6 +7,8 @@ from dataclasses import dataclass, asdict
 from typing import Optional, Any
 
 import httpx
+import google.auth.transport.requests
+import google.oauth2.id_token
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,28 @@ class BackendClient:
         self.agent_api_url = agent_api_url
         self._client = httpx.AsyncClient(timeout=30.0)
 
+    def _get_auth_headers(self) -> dict:
+        """
+        Return Authorization header with a Google Cloud ID token.
+
+        The token is scoped to agent_api_url (audience). Returns an empty dict
+        if no URL is configured or if token fetch fails (e.g., local dev without
+        a GCP metadata server).
+        """
+        if not self.agent_api_url:
+            return {}
+        audience = self.agent_api_url.rstrip("/")
+        try:
+            request = google.auth.transport.requests.Request()
+            token = google.oauth2.id_token.fetch_id_token(request, audience)
+            return {"Authorization": f"Bearer {token}"}
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch identity token; proceeding without auth",
+                extra={"error_type": type(e).__name__, "error_message": str(e)},
+            )
+            return {}
+
     async def _post_with_retry(
         self, url: str, payload: dict, session_id: str, log_label: str, request_id: str = "",
         timeout: Optional[float] = None, max_total_time: Optional[float] = None,
@@ -68,6 +92,7 @@ class BackendClient:
         effective_max_total_time = max_total_time if max_total_time is not None else MAX_TOTAL_TIME
         start_time = time.monotonic()
         last_exception: Optional[Exception] = None
+        auth_headers = self._get_auth_headers()
 
         for attempt in range(MAX_ATTEMPTS):
             elapsed = time.monotonic() - start_time
@@ -92,7 +117,7 @@ class BackendClient:
                     },
                 )
 
-                response = await self._client.post(url, json=payload, timeout=timeout)
+                response = await self._client.post(url, json=payload, headers=auth_headers, timeout=timeout)
                 response.raise_for_status()
 
                 data = response.json()

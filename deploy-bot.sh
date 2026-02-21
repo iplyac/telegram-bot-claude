@@ -49,15 +49,15 @@ echo "REGION:       $REGION"
 echo "IMAGE_BASE:   $IMAGE_BASE"
 echo "GIT_SHA:      ${GIT_SHA:-<not available>}"
 
+# Compile-time default — override by setting AGENT_API_URL before running the script
+AGENT_API_URL="${AGENT_API_URL:-https://master-agent-3qblthn7ba-ez.a.run.app}"
+VPC_NETWORK="${VPC_NETWORK:-default}"
+VPC_SUBNET="${VPC_SUBNET:-default}"
+
 # Build environment variables string
 ENV_VARS="LOG_LEVEL=${LOG_LEVEL:-INFO}"
-
-if [ -n "${AGENT_API_URL:-}" ]; then
-    ENV_VARS="${ENV_VARS},AGENT_API_URL=${AGENT_API_URL}"
-    echo "AGENT_API_URL: configured"
-else
-    echo "WARNING: AGENT_API_URL not set. Bot will not forward messages."
-fi
+ENV_VARS="${ENV_VARS},AGENT_API_URL=${AGENT_API_URL}"
+echo "AGENT_API_URL: ${AGENT_API_URL}"
 
 if [ -n "${TELEGRAM_WEBHOOK_URL:-}" ]; then
     ENV_VARS="${ENV_VARS},TELEGRAM_WEBHOOK_URL=${TELEGRAM_WEBHOOK_URL}"
@@ -103,26 +103,18 @@ fi
 echo ""
 echo "=== Deploying to Cloud Run ==="
 
-if [ -n "$ENV_VARS" ]; then
-    gcloud run deploy "$SERVICE_NAME" \
-        --quiet \
-        --project "$PROJECT_ID" \
-        --region "$REGION" \
-        --image "${IMAGE_BASE}:latest" \
-        --platform managed \
-        --allow-unauthenticated \
-        --set-env-vars "$ENV_VARS" \
-        --set-secrets "TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest"
-else
-    gcloud run deploy "$SERVICE_NAME" \
-        --quiet \
-        --project "$PROJECT_ID" \
-        --region "$REGION" \
-        --image "${IMAGE_BASE}:latest" \
-        --platform managed \
-        --allow-unauthenticated \
-        --set-secrets "TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest"
-fi
+gcloud run deploy "$SERVICE_NAME" \
+    --quiet \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --image "${IMAGE_BASE}:latest" \
+    --platform managed \
+    --allow-unauthenticated \
+    --network="${VPC_NETWORK}" \
+    --subnet="${VPC_SUBNET}" \
+    --vpc-egress=all-traffic \
+    --set-env-vars "$ENV_VARS" \
+    --set-secrets "TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest"
 
 echo ""
 echo "=== Deployment complete ==="
@@ -131,6 +123,21 @@ SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
     --region "$REGION" \
     --format 'value(status.url)')
 echo "Service URL: $SERVICE_URL"
+
+echo ""
+echo "=== Granting bot SA invoker role on master-agent ==="
+BOT_SA=$(gcloud run services describe "$SERVICE_NAME" \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --format "value(spec.template.spec.serviceAccountName)")
+MASTER_AGENT_SERVICE="${MASTER_AGENT_SERVICE:-master-agent}"
+gcloud run services add-iam-policy-binding "$MASTER_AGENT_SERVICE" \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --member="serviceAccount:${BOT_SA}" \
+    --role=roles/run.invoker \
+    --quiet
+echo "Granted roles/run.invoker on ${MASTER_AGENT_SERVICE} to ${BOT_SA}"
 
 echo ""
 echo "=== Setting up Telegram webhook ==="
