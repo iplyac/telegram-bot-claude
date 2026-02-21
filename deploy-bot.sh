@@ -49,8 +49,21 @@ echo "REGION:       $REGION"
 echo "IMAGE_BASE:   $IMAGE_BASE"
 echo "GIT_SHA:      ${GIT_SHA:-<not available>}"
 
-# Compile-time default — override by setting AGENT_API_URL before running the script
-AGENT_API_URL="${AGENT_API_URL:-https://master-agent-3qblthn7ba-ez.a.run.app}"
+# Resolve AGENT_API_URL dynamically from Cloud Run (override via env if needed)
+MASTER_AGENT_SERVICE="${MASTER_AGENT_SERVICE:-master-agent}"
+if [[ -z "${AGENT_API_URL:-}" ]]; then
+    echo "Fetching master-agent URL from Cloud Run..."
+    AGENT_API_URL=$(gcloud run services describe "$MASTER_AGENT_SERVICE" \
+        --project="$PROJECT_ID" \
+        --region="$REGION" \
+        --format="value(status.url)" \
+        --quiet 2>/dev/null || echo "")
+    if [[ -z "$AGENT_API_URL" ]]; then
+        echo "WARNING: master-agent service not found, AGENT_API_URL will not be set"
+    else
+        echo "Master agent URL: $AGENT_API_URL"
+    fi
+fi
 VPC_NETWORK="${VPC_NETWORK:-default}"
 VPC_SUBNET="${VPC_SUBNET:-default}"
 VPC_ROUTER="${VPC_ROUTER:-nat-router}"
