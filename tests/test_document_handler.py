@@ -33,6 +33,7 @@ def mock_update(mock_document):
     update.message.document = mock_document
     update.message.caption = None
     update.message.reply_text = AsyncMock()
+    update.message.reply_document = AsyncMock()
     update.update_id = 987654321
     return update
 
@@ -119,30 +120,43 @@ async def test_forward_document_raises_if_no_url():
 
 @pytest.mark.asyncio
 async def test_happy_path_pdf(mock_update, mock_context):
-    """Happy path: PDF document forwarded, agent response replied."""
+    """Happy path: PDF document forwarded, summary replied and .md attachment sent."""
     backend_client = BackendClient(agent_api_url="https://example.com")
 
     with patch.object(
         backend_client,
         "forward_document",
         new_callable=AsyncMock,
-        return_value={"response": "This is a summary of the report."},
+        return_value={
+            "response": "# Report\n\nExtracted content",
+            "metadata": {"format": "markdown", "pages": 5, "tables_found": 2, "images_found": 1, "processing_time_ms": 3200},
+        },
     ) as mock_forward:
         await handle_document_message(mock_update, mock_context, backend_client)
 
         mock_forward.assert_called_once()
         args = mock_forward.call_args[0]
-        assert args[2] == "application/pdf"   # mime_type
-        assert args[3] == "report.pdf"        # filename
+        assert args[2] == "application/pdf"
+        assert args[3] == "report.pdf"
 
-        mock_update.message.reply_text.assert_called_once_with(
-            "This is a summary of the report."
-        )
+        # Summary text message sent
+        mock_update.message.reply_text.assert_called_once()
+        summary = mock_update.message.reply_text.call_args[0][0]
+        assert "report.pdf" in summary
+        assert "Pages: 5" in summary
+        assert "Tables: 2" in summary
+        assert "Images: 1" in summary
+        assert "3.2s" in summary
+
+        # .md file attachment sent
+        mock_update.message.reply_document.assert_called_once()
+        doc_kwargs = mock_update.message.reply_document.call_args[1]
+        assert doc_kwargs["filename"] == "report.md"
 
 
 @pytest.mark.asyncio
 async def test_mime_type_fallback(mock_update, mock_context, mock_document):
-    """When mime_type is None, fallback to application/octet-stream (task 4.3)."""
+    """When mime_type is None, fallback to application/octet-stream."""
     mock_document.mime_type = None
     backend_client = BackendClient(agent_api_url="https://example.com")
 
@@ -150,7 +164,7 @@ async def test_mime_type_fallback(mock_update, mock_context, mock_document):
         backend_client,
         "forward_document",
         new_callable=AsyncMock,
-        return_value={"response": "Processed."},
+        return_value={"response": "Processed.", "metadata": {}},
     ) as mock_forward:
         await handle_document_message(mock_update, mock_context, backend_client)
 
@@ -160,7 +174,7 @@ async def test_mime_type_fallback(mock_update, mock_context, mock_document):
 
 @pytest.mark.asyncio
 async def test_filename_fallback(mock_update, mock_context, mock_document):
-    """When file_name is None, fallback to 'document' (task 4.4)."""
+    """When file_name is None, fallback to 'document'."""
     mock_document.file_name = None
     backend_client = BackendClient(agent_api_url="https://example.com")
 
@@ -168,7 +182,7 @@ async def test_filename_fallback(mock_update, mock_context, mock_document):
         backend_client,
         "forward_document",
         new_callable=AsyncMock,
-        return_value={"response": "Processed."},
+        return_value={"response": "Processed.", "metadata": {}},
     ) as mock_forward:
         await handle_document_message(mock_update, mock_context, backend_client)
 
@@ -217,17 +231,17 @@ async def test_caption_forwarded_as_prompt(mock_update, mock_context):
         backend_client,
         "forward_document",
         new_callable=AsyncMock,
-        return_value={"response": "Summary here."},
+        return_value={"response": "Summary here.", "metadata": {}},
     ) as mock_forward:
         await handle_document_message(mock_update, mock_context, backend_client)
 
         args = mock_forward.call_args[0]
-        assert args[4] == "Summarise this document"  # prompt
+        assert args[4] == "Summarise this document"
 
 
 @pytest.mark.asyncio
 async def test_no_caption_prompt_is_none(mock_update, mock_context):
-    """No caption means prompt is None (omitted from payload)."""
+    """No caption means prompt is None."""
     mock_update.message.caption = None
     backend_client = BackendClient(agent_api_url="https://example.com")
 
@@ -235,27 +249,85 @@ async def test_no_caption_prompt_is_none(mock_update, mock_context):
         backend_client,
         "forward_document",
         new_callable=AsyncMock,
-        return_value={"response": "Done."},
+        return_value={"response": "Done.", "metadata": {}},
     ) as mock_forward:
         await handle_document_message(mock_update, mock_context, backend_client)
 
         args = mock_forward.call_args[0]
-        assert args[4] is None  # prompt
+        assert args[4] is None
 
 
 @pytest.mark.asyncio
-async def test_empty_response_uses_fallback(mock_update, mock_context):
-    """Empty response from agent falls back to default message."""
+async def test_empty_content_no_attachment_and_note_in_summary(mock_update, mock_context):
+    """Empty content: no .md attachment, summary includes 'No content extracted'."""
     backend_client = BackendClient(agent_api_url="https://example.com")
 
     with patch.object(
         backend_client,
         "forward_document",
         new_callable=AsyncMock,
-        return_value={"response": ""},
+        return_value={"response": "", "metadata": {"format": "markdown", "pages": 2}},
     ):
         await handle_document_message(mock_update, mock_context, backend_client)
 
-        mock_update.message.reply_text.assert_called_once_with(
-            "Could not process document."
-        )
+        summary = mock_update.message.reply_text.call_args[0][0]
+        assert "No content extracted" in summary
+        mock_update.message.reply_document.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_partial_metadata_omits_missing_fields(mock_update, mock_context):
+    """Summary omits fields not present in metadata."""
+    backend_client = BackendClient(agent_api_url="https://example.com")
+
+    with patch.object(
+        backend_client,
+        "forward_document",
+        new_callable=AsyncMock,
+        return_value={
+            "response": "# Content",
+            "metadata": {"format": "markdown", "pages": 3},
+        },
+    ):
+        await handle_document_message(mock_update, mock_context, backend_client)
+
+        summary = mock_update.message.reply_text.call_args[0][0]
+        assert "Pages: 3" in summary
+        assert "Tables" not in summary
+        assert "Images" not in summary
+
+
+@pytest.mark.asyncio
+async def test_no_metadata_shows_filename_only(mock_update, mock_context):
+    """No metadata: summary shows filename only."""
+    backend_client = BackendClient(agent_api_url="https://example.com")
+
+    with patch.object(
+        backend_client,
+        "forward_document",
+        new_callable=AsyncMock,
+        return_value={"response": "# Content", "metadata": None},
+    ):
+        await handle_document_message(mock_update, mock_context, backend_client)
+
+        summary = mock_update.message.reply_text.call_args[0][0]
+        assert "report.pdf" in summary
+        mock_update.message.reply_document.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_md_filename_derived_from_original(mock_update, mock_context, mock_document):
+    """MD attachment filename replaces extension with .md."""
+    mock_document.file_name = "my_report.docx"
+    backend_client = BackendClient(agent_api_url="https://example.com")
+
+    with patch.object(
+        backend_client,
+        "forward_document",
+        new_callable=AsyncMock,
+        return_value={"response": "# Content", "metadata": {}},
+    ):
+        await handle_document_message(mock_update, mock_context, backend_client)
+
+        doc_kwargs = mock_update.message.reply_document.call_args[1]
+        assert doc_kwargs["filename"] == "my_report.md"

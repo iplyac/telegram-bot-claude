@@ -1,7 +1,9 @@
 """Document message handler."""
 
 import base64
+import io
 import logging
+import os
 import time
 
 from telegram import Update
@@ -131,12 +133,37 @@ async def handle_document_message(
             request_id,
         )
 
-        # Reply to user
-        response_text = result.get("response", "")
-        if not response_text:
-            response_text = "Could not process document."
+        # Build processing summary
+        meta = result.get("metadata") or {}
+        content = result.get("response", "")
 
-        await update.message.reply_text(response_text)
+        summary_lines = [f"Document processed: {filename}"]
+        details = []
+        if meta.get("pages") is not None:
+            details.append(f"Pages: {meta['pages']}")
+        if meta.get("tables_found") is not None:
+            details.append(f"Tables: {meta['tables_found']}")
+        if meta.get("images_found") is not None:
+            details.append(f"Images: {meta['images_found']}")
+        if details:
+            summary_lines.append(" | ".join(details))
+        if meta.get("processing_time_ms") is not None:
+            summary_lines.append(f"Processing time: {meta['processing_time_ms'] / 1000:.1f}s")
+        if not content:
+            summary_lines.append("No content extracted.")
+
+        await update.message.reply_text("\n".join(summary_lines))
+
+        # Send extracted content as .md attachment
+        if content:
+            basename = os.path.splitext(filename)[0]
+            md_filename = f"{basename}.md"
+            md_bytes = io.BytesIO(content.encode("utf-8"))
+            md_bytes.name = md_filename
+            await update.message.reply_document(
+                document=md_bytes,
+                filename=md_filename,
+            )
 
         latency_total_ms = int((time.monotonic() - start_time) * 1000)
         logger.info(
