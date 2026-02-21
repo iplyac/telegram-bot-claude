@@ -335,6 +335,69 @@ class BackendClient:
             timeout=120.0, max_total_time=180.0,
         )
 
+    async def forward_document(
+        self,
+        conversation_id: str,
+        document_base64: str,
+        mime_type: str = "application/octet-stream",
+        filename: str = "document",
+        prompt: Optional[str] = None,
+        metadata: Optional[TelegramMetadata] = None,
+        request_id: str = "",
+    ) -> dict:
+        """
+        Forward a document to the backend agent API.
+
+        Args:
+            conversation_id: Conversation identifier (format: "tg_dm_{user_id}" or "tg_group_{chat_id}")
+            document_base64: Base64-encoded document bytes
+            mime_type: Document MIME type (default: "application/octet-stream")
+            filename: Original filename (default: "document")
+            prompt: Optional user caption / instruction for the document
+            metadata: Telegram metadata (chat_id, user_id, chat_type)
+            request_id: Correlation ID for logging
+
+        Returns:
+            Dict with "response" key
+
+        Raises:
+            ValueError: If AGENT_API_URL is not configured or response is invalid
+            httpx.HTTPError: If all retry attempts fail
+        """
+        if self.agent_api_url is None:
+            raise ValueError("AGENT_API_URL is not configured")
+
+        url = f"{self.agent_api_url.rstrip('/')}/api/document"
+        payload: dict[str, Any] = {
+            "conversation_id": conversation_id,
+            "document_base64": document_base64,
+            "mime_type": mime_type,
+            "filename": filename,
+        }
+
+        if prompt:
+            payload["prompt"] = prompt
+
+        if metadata:
+            payload["metadata"] = {"telegram": metadata.to_dict()}
+
+        doc_size = len(document_base64) * 3 // 4  # approximate decoded size
+        logger.info(
+            "Forwarding document to backend",
+            extra={
+                "request_id": request_id,
+                "conversation_id": conversation_id,
+                "doc_size_bytes": doc_size,
+                "mime_type": mime_type,
+                "doc_filename": filename,
+            },
+        )
+
+        return await self._post_with_retry(
+            url, payload, conversation_id, "document", request_id,
+            timeout=120.0, max_total_time=180.0,
+        )
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self._client.aclose()

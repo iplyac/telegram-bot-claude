@@ -14,6 +14,7 @@ from tgbot.commands.promptreload import PromptReloadCommand
 from tgbot.commands.getprompt import GetPromptCommand
 from tgbot.handlers.voice import handle_voice_message
 from tgbot.handlers.image import handle_photo_message
+from tgbot.handlers.document import handle_document_message
 from tgbot.logging_config import generate_request_id
 from tgbot.services.backend_client import BackendClient, TelegramMetadata
 
@@ -120,6 +121,15 @@ def setup_handlers(
     # Register photo message handler
     application.add_handler(
         MessageHandler(filters.PHOTO, _photo_handler)
+    )
+
+    # Create document handler with closure over backend_client
+    async def _document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await handle_document_message(update, context, backend_client)
+
+    # Register document message handler (after photo, before unknown command)
+    application.add_handler(
+        MessageHandler(filters.Document.ALL, _document_handler)
     )
 
     # Register unknown command handler
