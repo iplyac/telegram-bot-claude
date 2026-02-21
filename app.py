@@ -189,18 +189,13 @@ async def lifespan(app: FastAPI):
 
         except Exception as e:
             error_msg = str(e)
-            logger.warning(f"Failed to set webhook: {error_msg}")
+            logger.critical(f"Failed to set webhook: {error_msg}")
 
             # Check for 404 (invalid token)
             if "404" in error_msg:
-                logger.warning("Invalid bot token detected (404 response from Telegram API)")
+                logger.critical("Invalid bot token detected (404 response from Telegram API)")
 
-            # Fallback to polling mode
-            logger.info("Falling back to polling mode")
-            app.state.mode = "polling"
-            app.state.webhook_mode = False
-            polling_task = asyncio.create_task(start_polling(tg_app))
-            app.state.polling_task = polling_task
+            raise
     else:
         # Polling mode
         app.state.webhook_mode = False
