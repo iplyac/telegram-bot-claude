@@ -421,7 +421,7 @@ class BackendClient:
 
         data = await self._post_with_retry(
             url, payload, conversation_id, "document", request_id,
-            timeout=120.0, max_total_time=180.0,
+            timeout=300.0, max_total_time=360.0,
             response_field="content",
         )
         # Normalize: master-agent document endpoint returns "content", handlers expect "response"
