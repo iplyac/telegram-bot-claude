@@ -59,12 +59,12 @@ async def test_forward_document_correct_url_and_payload():
 
     captured = {}
 
-    async def fake_post(url, payload, session_id, log_label, request_id="", timeout=None, max_total_time=None):
+    async def fake_post(url, payload, session_id, log_label, request_id="", timeout=None, max_total_time=None, response_field="response"):
         captured["url"] = url
         captured["payload"] = payload
         captured["timeout"] = timeout
         captured["max_total_time"] = max_total_time
-        return {"response": "ok"}
+        return {"content": "ok"}
 
     client._post_with_retry = fake_post
 
@@ -85,7 +85,7 @@ async def test_forward_document_correct_url_and_payload():
     assert captured["payload"]["prompt"] == "Summarise this"
     assert captured["timeout"] == 120.0
     assert captured["max_total_time"] == 180.0
-    assert result == {"response": "ok"}
+    assert result == {"response": "ok"}  # content normalized to response
 
 
 @pytest.mark.asyncio
@@ -95,9 +95,9 @@ async def test_forward_document_no_prompt_omitted():
 
     captured = {}
 
-    async def fake_post(url, payload, session_id, log_label, request_id="", timeout=None, max_total_time=None):
+    async def fake_post(url, payload, session_id, log_label, request_id="", timeout=None, max_total_time=None, response_field="response"):
         captured["payload"] = payload
-        return {"response": "ok"}
+        return {"content": "ok"}
 
     client._post_with_retry = fake_post
 

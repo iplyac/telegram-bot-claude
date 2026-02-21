@@ -45,6 +45,7 @@ class BackendClient:
     async def _post_with_retry(
         self, url: str, payload: dict, session_id: str, log_label: str, request_id: str = "",
         timeout: Optional[float] = None, max_total_time: Optional[float] = None,
+        response_field: str = "response",
     ) -> dict:
         """
         POST JSON to a URL with retry logic.
@@ -95,8 +96,8 @@ class BackendClient:
                 response.raise_for_status()
 
                 data = response.json()
-                if "response" not in data:
-                    raise ValueError("Missing 'response' field in backend response")
+                if response_field not in data:
+                    raise ValueError(f"Missing '{response_field}' field in backend response")
 
                 latency_ms = int((time.monotonic() - request_start) * 1000)
                 logger.info(
@@ -393,10 +394,14 @@ class BackendClient:
             },
         )
 
-        return await self._post_with_retry(
+        data = await self._post_with_retry(
             url, payload, conversation_id, "document", request_id,
             timeout=120.0, max_total_time=180.0,
+            response_field="content",
         )
+        # Normalize: master-agent document endpoint returns "content", handlers expect "response"
+        data["response"] = data.pop("content")
+        return data
 
     async def close(self) -> None:
         """Close the HTTP client."""
