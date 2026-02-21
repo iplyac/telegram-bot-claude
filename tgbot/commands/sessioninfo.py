@@ -1,13 +1,12 @@
 """Session info command handler."""
 
 import logging
-from typing import Optional
-
 import httpx
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from .base import BaseCommand
+from tgbot.services.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +14,8 @@ logger = logging.getLogger(__name__)
 class SessionInfoCommand(BaseCommand):
     """Handler for the /sessioninfo command."""
 
-    def __init__(self, agent_api_url: Optional[str]):
-        """
-        Initialize the session info command.
-
-        Args:
-            agent_api_url: Base URL for the agent API, or None if not configured
-        """
-        self._agent_api_url = agent_api_url
+    def __init__(self, backend_client: BackendClient):
+        self._backend_client = backend_client
 
     @property
     def name(self) -> str:
@@ -55,20 +48,22 @@ class SessionInfoCommand(BaseCommand):
             conversation_id = f"tg_chat_{chat_id}"
 
         # Check if backend is configured
-        if self._agent_api_url is None:
+        if self._backend_client.agent_api_url is None:
             await update.message.reply_text(
                 "Session info unavailable - backend not configured"
             )
             return
 
         # Query session info from master-agent
-        url = f"{self._agent_api_url.rstrip('/')}/api/session-info"
+        url = f"{self._backend_client.agent_api_url.rstrip('/')}/api/session-info"
+        auth_headers = self._backend_client._get_auth_headers()
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
                     url,
                     json={"conversation_id": conversation_id},
+                    headers=auth_headers,
                 )
                 response.raise_for_status()
                 data = response.json()

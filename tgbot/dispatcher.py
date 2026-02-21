@@ -85,9 +85,9 @@ def setup_handlers(
     # Create command instances
     start_cmd = StartCommand()
     test_cmd = TestCommand(project_id, region, service_name)
-    sessioninfo_cmd = SessionInfoCommand(backend_client.agent_api_url)
-    promptreload_cmd = PromptReloadCommand(backend_client.agent_api_url)
-    getprompt_cmd = GetPromptCommand(backend_client.agent_api_url)
+    sessioninfo_cmd = SessionInfoCommand(backend_client)
+    promptreload_cmd = PromptReloadCommand(backend_client)
+    getprompt_cmd = GetPromptCommand(backend_client)
 
     # Register command handlers
     application.add_handler(CommandHandler(start_cmd.name, start_cmd.handle))

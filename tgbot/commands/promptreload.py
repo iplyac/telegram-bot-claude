@@ -1,13 +1,12 @@
 """Prompt reload command handler."""
 
 import logging
-from typing import Optional
-
 import httpx
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from .base import BaseCommand
+from tgbot.services.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +14,8 @@ logger = logging.getLogger(__name__)
 class PromptReloadCommand(BaseCommand):
     """Handler for the /promptreload command."""
 
-    def __init__(self, agent_api_url: Optional[str]):
-        """
-        Initialize the prompt reload command.
-
-        Args:
-            agent_api_url: Base URL for the agent API, or None if not configured
-        """
-        self._agent_api_url = agent_api_url
+    def __init__(self, backend_client: BackendClient):
+        self._backend_client = backend_client
 
     @property
     def name(self) -> str:
@@ -45,18 +38,19 @@ class PromptReloadCommand(BaseCommand):
         )
 
         # Check if backend is configured
-        if self._agent_api_url is None:
+        if self._backend_client.agent_api_url is None:
             await update.message.reply_text(
                 "Prompt reload unavailable - backend not configured"
             )
             return
 
         # Call master-agent endpoint
-        url = f"{self._agent_api_url.rstrip('/')}/api/reload-prompt"
+        url = f"{self._backend_client.agent_api_url.rstrip('/')}/api/reload-prompt"
+        auth_headers = self._backend_client._get_auth_headers()
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(url)
+                response = await client.post(url, headers=auth_headers)
                 response.raise_for_status()
                 data = response.json()
 
