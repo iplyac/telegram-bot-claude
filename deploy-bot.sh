@@ -53,6 +53,35 @@ echo "GIT_SHA:      ${GIT_SHA:-<not available>}"
 AGENT_API_URL="${AGENT_API_URL:-https://master-agent-3qblthn7ba-ez.a.run.app}"
 VPC_NETWORK="${VPC_NETWORK:-default}"
 VPC_SUBNET="${VPC_SUBNET:-default}"
+VPC_ROUTER="${VPC_ROUTER:-nat-router}"
+VPC_NAT="${VPC_NAT:-nat-config}"
+
+echo ""
+echo "=== Ensuring Cloud NAT exists for VPC egress ==="
+if ! gcloud compute routers describe "$VPC_ROUTER" \
+    --region="$REGION" --project="$PROJECT_ID" &>/dev/null; then
+  echo "Creating Cloud Router: $VPC_ROUTER"
+  gcloud compute routers create "$VPC_ROUTER" \
+    --region="$REGION" \
+    --network="$VPC_NETWORK" \
+    --project="$PROJECT_ID"
+else
+  echo "Cloud Router $VPC_ROUTER already exists"
+fi
+
+if ! gcloud compute routers nats describe "$VPC_NAT" \
+    --router="$VPC_ROUTER" \
+    --region="$REGION" --project="$PROJECT_ID" &>/dev/null; then
+  echo "Creating Cloud NAT: $VPC_NAT"
+  gcloud compute routers nats create "$VPC_NAT" \
+    --router="$VPC_ROUTER" \
+    --region="$REGION" \
+    --auto-allocate-nat-external-ips \
+    --nat-all-subnet-ip-ranges \
+    --project="$PROJECT_ID"
+else
+  echo "Cloud NAT $VPC_NAT already exists"
+fi
 
 # Build environment variables string
 ENV_VARS="LOG_LEVEL=${LOG_LEVEL:-INFO}"
