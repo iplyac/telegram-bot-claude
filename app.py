@@ -3,9 +3,11 @@
 import asyncio
 import hmac
 import logging
+import pathlib
 import sys
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import FastAPI, Request, Response
@@ -165,6 +167,11 @@ async def lifespan(app: FastAPI):
     app.state.webhook_secret = webhook_secret
     app.state.backend_client = backend_client
     app.state.project_id = project_id
+    app.state.started_at = datetime.now(timezone.utc)
+    try:
+        app.state.version = pathlib.Path("VERSION").read_text().strip()
+    except FileNotFoundError:
+        app.state.version = "unknown"
 
     # 9. Determine mode and start accordingly
     polling_task: Optional[asyncio.Task] = None
@@ -278,6 +285,19 @@ async def healthz_bot(request: Request) -> dict[str, Any]:
         "bot_running": getattr(request.app.state, "bot_running", False),
         "mode": getattr(request.app.state, "mode", "unknown"),
         "webhook_path": getattr(request.app.state, "webhook_path", "/telegram/webhook"),
+    }
+
+
+@app.get("/status")
+async def service_status(request: Request) -> dict[str, Any]:
+    """Service status endpoint."""
+    uptime = (datetime.now(timezone.utc) - request.app.state.started_at).total_seconds()
+    return {
+        "name": "telegram-bot",
+        "purpose": "Telegram interface — forwards user messages to master-agent and returns responses",
+        "version": request.app.state.version,
+        "uptime_seconds": uptime,
+        "status": "ok",
     }
 
 
