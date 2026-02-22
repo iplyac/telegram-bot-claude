@@ -504,6 +504,22 @@ class BackendClient:
         url = f"{self.agent_api_url.rstrip('/')}/api/prompt"
         return await self._get(url)
 
+    async def get_agents_status(self) -> dict:
+        """
+        Retrieve aggregated status of all agents from the backend.
+
+        Returns:
+            Dict with "agents" key containing list of agent status objects
+
+        Raises:
+            ValueError: If AGENT_API_URL is not configured
+            httpx.HTTPError: On HTTP-level errors
+        """
+        if self.agent_api_url is None:
+            raise ValueError("AGENT_API_URL is not configured")
+        url = f"{self.agent_api_url.rstrip('/')}/api/agents-status"
+        return await self._get(url)
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self._client.aclose()
