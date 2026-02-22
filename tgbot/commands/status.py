@@ -2,11 +2,10 @@
 
 import logging
 
-import httpx
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from tgbot import config
+from tgbot.services.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
 
@@ -42,27 +41,20 @@ def _format_table(agents: list[dict]) -> str:
     return "\n".join(rows)
 
 
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /status command — query master-agent and display agents table."""
-    if update.message is None:
-        return
+def make_status_handler(backend_client: BackendClient):
+    """Return a /status command handler bound to the given backend_client."""
 
-    agent_api_url = config.get_agent_api_url()
-    if not agent_api_url:
-        await update.message.reply_text("Не удалось получить статус агентов")
-        return
+    async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None:
+            return
+        try:
+            data = await backend_client.get_agents_status()
+            agents = data.get("agents", [])
+            table = _format_table(agents)
+            text = f"<b>Статус агентов</b>\n\n<pre>{table}</pre>"
+            await update.message.reply_text(text, parse_mode="HTML")
+        except Exception as e:
+            logger.warning("Failed to fetch agents status: %s", e)
+            await update.message.reply_text("Не удалось получить статус агентов")
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{agent_api_url}/api/agents-status")
-            resp.raise_for_status()
-            data = resp.json()
-
-        agents = data.get("agents", [])
-        table = _format_table(agents)
-        text = f"<b>Статус агентов</b>\n\n<pre>{table}</pre>"
-        await update.message.reply_text(text, parse_mode="HTML")
-
-    except Exception as e:
-        logger.warning("Failed to fetch agents status: %s", e)
-        await update.message.reply_text("Не удалось получить статус агентов")
+    return status_command

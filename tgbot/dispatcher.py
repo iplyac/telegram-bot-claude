@@ -12,7 +12,7 @@ from tgbot.commands.test import TestCommand
 from tgbot.commands.sessioninfo import SessionInfoCommand
 from tgbot.commands.promptreload import PromptReloadCommand
 from tgbot.commands.getprompt import GetPromptCommand
-from tgbot.commands.status import status_command
+from tgbot.commands.status import make_status_handler
 from tgbot.handlers.voice import handle_voice_message
 from tgbot.handlers.image import handle_photo_message
 from tgbot.handlers.document import handle_document_message
@@ -62,7 +62,7 @@ def setup_handlers(
     application.add_handler(CommandHandler(sessioninfo_cmd.name, sessioninfo_cmd.handle))
     application.add_handler(CommandHandler(promptreload_cmd.name, promptreload_cmd.handle))
     application.add_handler(CommandHandler(getprompt_cmd.name, getprompt_cmd.handle))
-    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("status", make_status_handler(backend_client)))
 
     # Create message handler with closure over backend_client
     async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
