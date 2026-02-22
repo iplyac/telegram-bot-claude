@@ -37,10 +37,13 @@ class StartCommand(BaseCommand):
         greeting = (
             f"Hello, {first_name}! Welcome to the bot.\n\n"
             "I can forward your messages to the backend service.\n"
-            "Just send me a text message to get started.\n\n"
+            "Just send me a text message, photo, voice message, or document to get started.\n\n"
             "Commands:\n"
             "/start - Show this greeting\n"
-            "/test - Show diagnostic information"
+            "/test - Show diagnostic information\n"
+            "/sessioninfo - Show current session info\n"
+            "/promptreload - Reload the AI agent system prompt\n"
+            "/getprompt - Display the current AI agent system prompt"
         )
 
         await update.message.reply_text(greeting)

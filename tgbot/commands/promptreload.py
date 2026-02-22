@@ -6,9 +6,14 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from .base import BaseCommand
+from tgbot import config
 from tgbot.services.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
+
+# Admin user IDs — loaded once at import time from ADMIN_USER_IDS env var.
+# If empty, the command is unrestricted (not recommended for production).
+_ADMIN_USER_IDS = config.get_admin_user_ids()
 
 
 class PromptReloadCommand(BaseCommand):
@@ -32,6 +37,15 @@ class PromptReloadCommand(BaseCommand):
 
         user_id = update.effective_user.id
 
+        # Access control — only allowed user IDs may reload the prompt
+        if _ADMIN_USER_IDS and user_id not in _ADMIN_USER_IDS:
+            logger.warning(
+                "Unauthorized /promptreload attempt",
+                extra={"user_id": user_id},
+            )
+            await update.message.reply_text("Unauthorized.")
+            return
+
         logger.info(
             "Handling /promptreload command",
             extra={"user_id": user_id},
@@ -44,17 +58,9 @@ class PromptReloadCommand(BaseCommand):
             )
             return
 
-        # Call master-agent endpoint
-        url = f"{self._backend_client.agent_api_url.rstrip('/')}/api/reload-prompt"
-        auth_headers = self._backend_client._get_auth_headers()
-
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(url, headers=auth_headers)
-                response.raise_for_status()
-                data = response.json()
+            data = await self._backend_client.reload_prompt()
 
-            # Handle response
             status = data.get("status")
 
             if status == "ok":
@@ -74,10 +80,11 @@ class PromptReloadCommand(BaseCommand):
 
         except httpx.HTTPError as e:
             logger.warning(
-                f"Prompt reload request failed: {type(e).__name__}",
+                "Prompt reload request failed",
                 extra={
                     "user_id": user_id,
+                    "error_type": type(e).__name__,
                     "error": str(e),
                 },
             )
-            await update.message.reply_text(f"Failed to reload prompt: {e}")
+            await update.message.reply_text("Failed to reload prompt. Please try again later.")

@@ -10,7 +10,8 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from tgbot.logging_config import generate_request_id
-from tgbot.services.backend_client import BackendClient, TelegramMetadata
+from tgbot.utils import derive_conversation_id
+from tgbot.services.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
 
@@ -29,36 +30,7 @@ MIME_TO_EXT = {
     "image/gif": "gif",
 }
 
-
-def _derive_conversation_id(update: Update) -> tuple[str, TelegramMetadata]:
-    """
-    Derive conversation_id and metadata from Telegram update.
-
-    Returns:
-        Tuple of (conversation_id, TelegramMetadata)
-    """
-    chat = update.effective_chat
-    user = update.effective_user
-
-    chat_id = chat.id if chat else 0
-    user_id = user.id if user else 0
-    chat_type = chat.type if chat else "unknown"
-
-    # Derive conversation_id based on chat type
-    if chat_type == "private":
-        conversation_id = f"tg_dm_{user_id}"
-    elif chat_type in ("group", "supergroup"):
-        conversation_id = f"tg_group_{chat_id}"
-    else:
-        conversation_id = f"tg_chat_{chat_id}"
-
-    metadata = TelegramMetadata(
-        chat_id=chat_id,
-        user_id=user_id,
-        chat_type=chat_type,
-    )
-
-    return conversation_id, metadata
+MAX_PHOTO_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB — Telegram bot API limit
 
 
 async def handle_photo_message(
@@ -84,10 +56,15 @@ async def handle_photo_message(
     request_id = generate_request_id()
 
     # Derive conversation_id and metadata
-    conversation_id, metadata = _derive_conversation_id(update)
+    conversation_id, metadata = derive_conversation_id(update)
 
     # Get largest photo size
     photo = photo_list[-1]
+
+    # Reject oversized files early to avoid wasting memory and bandwidth
+    if photo.file_size and photo.file_size > MAX_PHOTO_SIZE_BYTES:
+        await update.message.reply_text("Photo too large (max 20 MB).")
+        return
 
     logger.info(
         "Message received",

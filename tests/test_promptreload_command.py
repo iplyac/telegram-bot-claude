@@ -5,11 +5,15 @@ from unittest.mock import MagicMock, AsyncMock, patch
 import httpx
 
 from tgbot.commands.promptreload import PromptReloadCommand
+from tgbot.services.backend_client import BackendClient
+
+
+def make_backend(url="https://example.com"):
+    return BackendClient(agent_api_url=url)
 
 
 @pytest.fixture
 def mock_update():
-    """Create a mock Telegram Update."""
     update = MagicMock()
     update.effective_user = MagicMock()
     update.effective_user.id = 123456
@@ -20,86 +24,104 @@ def mock_update():
 
 @pytest.fixture
 def mock_context():
-    """Create a mock bot context."""
     return MagicMock()
 
 
 class TestPromptReloadCommand:
-    """Tests for PromptReloadCommand class."""
-
     def test_name(self):
-        """Command name should be 'promptreload'."""
-        cmd = PromptReloadCommand(agent_api_url="https://example.com")
+        cmd = PromptReloadCommand(make_backend())
         assert cmd.name == "promptreload"
 
     def test_description(self):
-        """Command should have a description."""
-        cmd = PromptReloadCommand(agent_api_url="https://example.com")
+        cmd = PromptReloadCommand(make_backend())
         assert cmd.description != ""
 
 
 class TestSuccessScenario:
-    """Tests for successful prompt reload."""
-
     @pytest.mark.asyncio
     async def test_success_response(self, mock_update, mock_context):
-        """Should display success message with prompt length."""
-        cmd = PromptReloadCommand(agent_api_url="https://example.com")
+        backend = make_backend()
+        cmd = PromptReloadCommand(backend)
 
-        with patch("tgbot.commands.promptreload.httpx.AsyncClient") as mock_client:
-            mock_response = MagicMock()
-            mock_response.json.return_value = {"status": "ok", "prompt_length": 207}
-            mock_response.raise_for_status = MagicMock()
-
-            mock_instance = AsyncMock()
-            mock_instance.post = AsyncMock(return_value=mock_response)
-            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-            mock_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_client.return_value = mock_instance
-
+        with patch.object(
+            backend, "reload_prompt",
+            new_callable=AsyncMock,
+            return_value={"status": "ok", "prompt_length": 207},
+        ):
             await cmd.handle(mock_update, mock_context)
 
-            mock_update.message.reply_text.assert_called_once_with(
-                "Prompt reloaded successfully (207 characters)"
-            )
-
-
-class TestApiErrorScenario:
-    """Tests for API error responses."""
+        mock_update.message.reply_text.assert_called_once_with(
+            "Prompt reloaded successfully (207 characters)"
+        )
 
     @pytest.mark.asyncio
     async def test_api_error_response(self, mock_update, mock_context):
-        """Should display error message from API."""
-        cmd = PromptReloadCommand(agent_api_url="https://example.com")
+        backend = make_backend()
+        cmd = PromptReloadCommand(backend)
 
-        with patch("tgbot.commands.promptreload.httpx.AsyncClient") as mock_client:
-            mock_response = MagicMock()
-            mock_response.json.return_value = {
-                "status": "error",
-                "error": "AGENT_PROMPT_ID not configured",
-            }
-            mock_response.raise_for_status = MagicMock()
-
-            mock_instance = AsyncMock()
-            mock_instance.post = AsyncMock(return_value=mock_response)
-            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-            mock_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_client.return_value = mock_instance
-
+        with patch.object(
+            backend, "reload_prompt",
+            new_callable=AsyncMock,
+            return_value={"status": "error", "error": "AGENT_PROMPT_ID not configured"},
+        ):
             await cmd.handle(mock_update, mock_context)
 
-            mock_update.message.reply_text.assert_called_once_with(
-                "Failed to reload prompt: AGENT_PROMPT_ID not configured"
-            )
+        mock_update.message.reply_text.assert_called_once_with(
+            "Failed to reload prompt: AGENT_PROMPT_ID not configured"
+        )
 
 
-class TestBackendNotConfigured:
-    """Tests for backend not configured scenario."""
+class TestAdminAccessControl:
+    @pytest.mark.asyncio
+    async def test_unauthorized_user_rejected(self, mock_update, mock_context):
+        """Non-admin users should be rejected when ADMIN_USER_IDS is configured."""
+        backend = make_backend()
+        cmd = PromptReloadCommand(backend)
+
+        with patch("tgbot.commands.promptreload._ADMIN_USER_IDS", frozenset({999999})):
+            await cmd.handle(mock_update, mock_context)
+
+        mock_update.message.reply_text.assert_called_once_with("Unauthorized.")
 
     @pytest.mark.asyncio
+    async def test_authorized_user_allowed(self, mock_update, mock_context):
+        """Admin user (id=123456) should be allowed through."""
+        backend = make_backend()
+        cmd = PromptReloadCommand(backend)
+
+        with patch("tgbot.commands.promptreload._ADMIN_USER_IDS", frozenset({123456})):
+            with patch.object(
+                backend, "reload_prompt",
+                new_callable=AsyncMock,
+                return_value={"status": "ok", "prompt_length": 100},
+            ):
+                await cmd.handle(mock_update, mock_context)
+
+        reply_text = mock_update.message.reply_text.call_args[0][0]
+        assert "reloaded successfully" in reply_text
+
+    @pytest.mark.asyncio
+    async def test_empty_admin_ids_allows_all(self, mock_update, mock_context):
+        """Empty ADMIN_USER_IDS means no restriction."""
+        backend = make_backend()
+        cmd = PromptReloadCommand(backend)
+
+        with patch("tgbot.commands.promptreload._ADMIN_USER_IDS", frozenset()):
+            with patch.object(
+                backend, "reload_prompt",
+                new_callable=AsyncMock,
+                return_value={"status": "ok", "prompt_length": 50},
+            ):
+                await cmd.handle(mock_update, mock_context)
+
+        reply_text = mock_update.message.reply_text.call_args[0][0]
+        assert "reloaded successfully" in reply_text
+
+
+class TestErrorHandling:
+    @pytest.mark.asyncio
     async def test_backend_not_configured(self, mock_update, mock_context):
-        """Should reply with error when backend not configured."""
-        cmd = PromptReloadCommand(agent_api_url=None)
+        cmd = PromptReloadCommand(BackendClient(agent_api_url=None))
 
         await cmd.handle(mock_update, mock_context)
 
@@ -108,21 +130,17 @@ class TestBackendNotConfigured:
         )
 
     @pytest.mark.asyncio
-    async def test_http_error(self, mock_update, mock_context):
-        """Should reply with error on HTTP failure."""
-        cmd = PromptReloadCommand(agent_api_url="https://example.com")
+    async def test_http_error_shows_generic_message(self, mock_update, mock_context):
+        """HTTP error should show a safe generic message, not the raw exception."""
+        backend = make_backend()
+        cmd = PromptReloadCommand(backend)
 
-        with patch("tgbot.commands.promptreload.httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
-            mock_instance.post = AsyncMock(
-                side_effect=httpx.ConnectError("Connection refused")
-            )
-            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-            mock_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_client.return_value = mock_instance
-
+        with patch.object(
+            backend, "reload_prompt",
+            side_effect=httpx.ConnectError("Connection refused"),
+        ):
             await cmd.handle(mock_update, mock_context)
 
-            mock_update.message.reply_text.assert_called_once()
-            call_args = mock_update.message.reply_text.call_args[0][0]
-            assert "Failed to reload prompt" in call_args
+        call_text = mock_update.message.reply_text.call_args[0][0]
+        assert "Failed to reload prompt" in call_text
+        assert "Connection refused" not in call_text  # no raw error leakage

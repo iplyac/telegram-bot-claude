@@ -11,37 +11,15 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from tgbot.logging_config import generate_request_id
-from tgbot.services.backend_client import BackendClient, TelegramMetadata
+from tgbot.utils import derive_conversation_id
+from tgbot.services.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
 
 MSG_AGENT_NOT_CONFIGURED = "AGENT_API_URL is not configured"
 MSG_BACKEND_UNAVAILABLE = "Backend unavailable, please try again later."
 
-
-def _derive_conversation_id(update: Update) -> tuple[str, TelegramMetadata]:
-    """Derive conversation_id and metadata from Telegram update."""
-    chat = update.effective_chat
-    user = update.effective_user
-
-    chat_id = chat.id if chat else 0
-    user_id = user.id if user else 0
-    chat_type = chat.type if chat else "unknown"
-
-    if chat_type == "private":
-        conversation_id = f"tg_dm_{user_id}"
-    elif chat_type in ("group", "supergroup"):
-        conversation_id = f"tg_group_{chat_id}"
-    else:
-        conversation_id = f"tg_chat_{chat_id}"
-
-    metadata = TelegramMetadata(
-        chat_id=chat_id,
-        user_id=user_id,
-        chat_type=chat_type,
-    )
-
-    return conversation_id, metadata
+MAX_DOC_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB — Telegram bot API limit
 
 
 async def handle_document_message(
@@ -63,10 +41,15 @@ async def handle_document_message(
     if not document:
         return
 
+    # Reject oversized files early to avoid wasting memory and bandwidth
+    if document.file_size and document.file_size > MAX_DOC_SIZE_BYTES:
+        await update.message.reply_text("Document too large (max 20 MB).")
+        return
+
     start_time = time.monotonic()
     request_id = generate_request_id()
 
-    conversation_id, metadata = _derive_conversation_id(update)
+    conversation_id, metadata = derive_conversation_id(update)
 
     # Derive MIME type — fallback to octet-stream if Telegram doesn't provide one
     mime_type = document.mime_type or "application/octet-stream"

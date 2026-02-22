@@ -39,9 +39,9 @@ class SessionInfoCommand(BaseCommand):
             extra={"user_id": user_id, "chat_id": chat_id, "chat_type": chat_type},
         )
 
-        # Derive conversation_id based on chat type
+        # Derive conversation_id — use user_id for private chats (consistent with all handlers)
         if chat_type == "private":
-            conversation_id = f"tg_dm_{chat_id}"
+            conversation_id = f"tg_dm_{user_id}"
         elif chat_type in ("group", "supergroup"):
             conversation_id = f"tg_group_{chat_id}"
         else:
@@ -54,19 +54,8 @@ class SessionInfoCommand(BaseCommand):
             )
             return
 
-        # Query session info from master-agent
-        url = f"{self._backend_client.agent_api_url.rstrip('/')}/api/session-info"
-        auth_headers = self._backend_client._get_auth_headers()
-
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    url,
-                    json={"conversation_id": conversation_id},
-                    headers=auth_headers,
-                )
-                response.raise_for_status()
-                data = response.json()
+            data = await self._backend_client.get_session_info(conversation_id)
 
             # Validate response
             if "session_exists" not in data:
@@ -75,31 +64,32 @@ class SessionInfoCommand(BaseCommand):
                 )
                 return
 
-            # Format response
+            # Format response — no parse_mode to avoid Markdown injection via backend data
             if data.get("session_exists"):
                 message_count = data.get("message_count")
                 count_str = f"\nMessages: {message_count}" if message_count is not None else ""
                 text = (
                     f"Session info:\n"
-                    f"- Conversation ID: `{data.get('conversation_id', conversation_id)}`\n"
-                    f"- Session ID: `{data.get('session_id', conversation_id)}`\n"
+                    f"- Conversation ID: {data.get('conversation_id', conversation_id)}\n"
+                    f"- Session ID: {data.get('session_id', conversation_id)}\n"
                     f"- Status: Active{count_str}"
                 )
             else:
                 text = (
                     f"No active session for this chat.\n"
-                    f"- Conversation ID: `{conversation_id}`"
+                    f"- Conversation ID: {conversation_id}"
                 )
 
-            await update.message.reply_text(text, parse_mode="Markdown")
+            await update.message.reply_text(text)
 
         except httpx.HTTPError as e:
             logger.warning(
-                f"Session info request failed: {type(e).__name__}",
+                "Session info request failed",
                 extra={
                     "user_id": user_id,
                     "conversation_id": conversation_id,
+                    "error_type": type(e).__name__,
                     "error": str(e),
                 },
             )
-            await update.message.reply_text(f"Failed to get session info: {e}")
+            await update.message.reply_text("Failed to get session info. Please try again later.")

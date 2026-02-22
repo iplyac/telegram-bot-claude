@@ -44,20 +44,26 @@ class BackendClient:
         self.agent_api_url = agent_api_url
         self._client = httpx.AsyncClient(timeout=30.0)
 
-    def _get_auth_headers(self) -> dict:
+    async def _get_auth_headers(self) -> dict:
         """
         Return Authorization header with a Google Cloud ID token.
 
         The token is scoped to agent_api_url (audience). Returns an empty dict
         if no URL is configured or if token fetch fails (e.g., local dev without
         a GCP metadata server).
+
+        The synchronous GCP metadata request is offloaded to a thread pool to
+        avoid blocking the event loop.
         """
         if not self.agent_api_url:
             return {}
         audience = self.agent_api_url.rstrip("/")
         try:
+            loop = asyncio.get_event_loop()
             request = google.auth.transport.requests.Request()
-            token = google.oauth2.id_token.fetch_id_token(request, audience)
+            token = await loop.run_in_executor(
+                None, google.oauth2.id_token.fetch_id_token, request, audience
+            )
             return {"Authorization": f"Bearer {token}"}
         except Exception as e:
             logger.warning(
@@ -92,7 +98,6 @@ class BackendClient:
         effective_max_total_time = max_total_time if max_total_time is not None else MAX_TOTAL_TIME
         start_time = time.monotonic()
         last_exception: Optional[Exception] = None
-        auth_headers = self._get_auth_headers()
 
         for attempt in range(MAX_ATTEMPTS):
             elapsed = time.monotonic() - start_time
@@ -102,6 +107,10 @@ class BackendClient:
                     extra={"session_id": session_id, "attempts": attempt},
                 )
                 break
+
+            # Fetch a fresh auth token on each attempt so stale tokens are
+            # never reused across retries (GCP ID tokens expire in 1 hour).
+            auth_headers = await self._get_auth_headers()
 
             try:
                 request_start = time.monotonic()
@@ -427,6 +436,73 @@ class BackendClient:
         # Normalize: master-agent document endpoint returns "content", handlers expect "response"
         data["response"] = data.pop("content")
         return data
+
+    async def _get(self, url: str, timeout: float = 10.0) -> dict:
+        """
+        GET request using the shared connection pool with auth headers.
+
+        Raises:
+            httpx.HTTPError: On HTTP-level errors
+        """
+        auth_headers = await self._get_auth_headers()
+        response = await self._client.get(url, headers=auth_headers, timeout=timeout)
+        response.raise_for_status()
+        return response.json()
+
+    async def get_session_info(self, conversation_id: str) -> dict:
+        """
+        Query session info from the backend.
+
+        Returns:
+            Dict with at least a "session_exists" key
+
+        Raises:
+            ValueError: If AGENT_API_URL is not configured
+            httpx.HTTPError: On HTTP-level errors
+        """
+        if self.agent_api_url is None:
+            raise ValueError("AGENT_API_URL is not configured")
+        url = f"{self.agent_api_url.rstrip('/')}/api/session-info"
+        return await self._post_with_retry(
+            url, {"conversation_id": conversation_id},
+            conversation_id, "session-info",
+            response_field="session_exists", timeout=10.0, max_total_time=15.0,
+        )
+
+    async def reload_prompt(self) -> dict:
+        """
+        Trigger system prompt reload on the backend.
+
+        Returns:
+            Dict with a "status" key
+
+        Raises:
+            ValueError: If AGENT_API_URL is not configured
+            httpx.HTTPError: On HTTP-level errors
+        """
+        if self.agent_api_url is None:
+            raise ValueError("AGENT_API_URL is not configured")
+        url = f"{self.agent_api_url.rstrip('/')}/api/reload-prompt"
+        return await self._post_with_retry(
+            url, {}, "system", "reload-prompt",
+            response_field="status", timeout=10.0, max_total_time=15.0,
+        )
+
+    async def get_prompt(self) -> dict:
+        """
+        Retrieve the current system prompt from the backend.
+
+        Returns:
+            Dict with "prompt" and "length" keys
+
+        Raises:
+            ValueError: If AGENT_API_URL is not configured
+            httpx.HTTPError: On HTTP-level errors
+        """
+        if self.agent_api_url is None:
+            raise ValueError("AGENT_API_URL is not configured")
+        url = f"{self.agent_api_url.rstrip('/')}/api/prompt"
+        return await self._get(url)
 
     async def close(self) -> None:
         """Close the HTTP client."""

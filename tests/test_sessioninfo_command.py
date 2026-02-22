@@ -5,6 +5,11 @@ from unittest.mock import MagicMock, AsyncMock, patch
 import httpx
 
 from tgbot.commands.sessioninfo import SessionInfoCommand
+from tgbot.services.backend_client import BackendClient
+
+
+def make_backend(url="https://example.com"):
+    return BackendClient(agent_api_url=url)
 
 
 @pytest.fixture
@@ -37,81 +42,55 @@ def mock_update_group():
 
 @pytest.fixture
 def mock_context():
-    """Create a mock bot context."""
     return MagicMock()
 
 
 class TestSessionInfoCommand:
-    """Tests for SessionInfoCommand class."""
-
     def test_name(self):
-        """Command name should be 'sessioninfo'."""
-        cmd = SessionInfoCommand(agent_api_url="https://example.com")
+        cmd = SessionInfoCommand(make_backend())
         assert cmd.name == "sessioninfo"
 
     def test_description(self):
-        """Command should have a description."""
-        cmd = SessionInfoCommand(agent_api_url="https://example.com")
+        cmd = SessionInfoCommand(make_backend())
         assert cmd.description != ""
 
 
 class TestConversationIdDerivation:
-    """Tests for conversation_id derivation."""
-
     @pytest.mark.asyncio
-    async def test_private_chat_conversation_id(self, mock_update_private, mock_context):
-        """Private chat should use tg_dm_{chat_id} format."""
-        cmd = SessionInfoCommand(agent_api_url="https://example.com")
+    async def test_private_chat_uses_user_id(self, mock_update_private, mock_context):
+        """Private chat should use tg_dm_{user_id} format."""
+        backend = make_backend()
+        cmd = SessionInfoCommand(backend)
 
-        with patch("tgbot.commands.sessioninfo.httpx.AsyncClient") as mock_client:
-            mock_response = MagicMock()
-            mock_response.json.return_value = {"session_exists": False}
-            mock_response.raise_for_status = MagicMock()
-
-            mock_instance = AsyncMock()
-            mock_instance.post = AsyncMock(return_value=mock_response)
-            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-            mock_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_client.return_value = mock_instance
-
+        with patch.object(
+            backend, "get_session_info",
+            new_callable=AsyncMock,
+            return_value={"session_exists": False},
+        ) as mock_get:
             await cmd.handle(mock_update_private, mock_context)
 
-            # Verify POST was called with correct conversation_id
-            mock_instance.post.assert_called_once()
-            call_kwargs = mock_instance.post.call_args
-            assert call_kwargs[1]["json"]["conversation_id"] == "tg_dm_123456"
+        mock_get.assert_called_once_with("tg_dm_123456")
 
     @pytest.mark.asyncio
-    async def test_group_chat_conversation_id(self, mock_update_group, mock_context):
+    async def test_group_chat_uses_chat_id(self, mock_update_group, mock_context):
         """Group chat should use tg_group_{chat_id} format."""
-        cmd = SessionInfoCommand(agent_api_url="https://example.com")
+        backend = make_backend()
+        cmd = SessionInfoCommand(backend)
 
-        with patch("tgbot.commands.sessioninfo.httpx.AsyncClient") as mock_client:
-            mock_response = MagicMock()
-            mock_response.json.return_value = {"session_exists": False}
-            mock_response.raise_for_status = MagicMock()
-
-            mock_instance = AsyncMock()
-            mock_instance.post = AsyncMock(return_value=mock_response)
-            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-            mock_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_client.return_value = mock_instance
-
+        with patch.object(
+            backend, "get_session_info",
+            new_callable=AsyncMock,
+            return_value={"session_exists": False},
+        ) as mock_get:
             await cmd.handle(mock_update_group, mock_context)
 
-            # Verify POST was called with correct conversation_id
-            mock_instance.post.assert_called_once()
-            call_kwargs = mock_instance.post.call_args
-            assert call_kwargs[1]["json"]["conversation_id"] == "tg_group_789012"
+        mock_get.assert_called_once_with("tg_group_789012")
 
 
 class TestErrorHandling:
-    """Tests for error handling scenarios."""
-
     @pytest.mark.asyncio
     async def test_backend_not_configured(self, mock_update_private, mock_context):
-        """Should reply with error when backend not configured."""
-        cmd = SessionInfoCommand(agent_api_url=None)
+        cmd = SessionInfoCommand(BackendClient(agent_api_url=None))
 
         await cmd.handle(mock_update_private, mock_context)
 
@@ -120,103 +99,75 @@ class TestErrorHandling:
         )
 
     @pytest.mark.asyncio
-    async def test_http_error(self, mock_update_private, mock_context):
-        """Should reply with error on HTTP failure."""
-        cmd = SessionInfoCommand(agent_api_url="https://example.com")
+    async def test_http_error_shows_generic_message(self, mock_update_private, mock_context):
+        """HTTP error should show a safe generic message, not the raw exception."""
+        backend = make_backend()
+        cmd = SessionInfoCommand(backend)
 
-        with patch("tgbot.commands.sessioninfo.httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
-            mock_instance.post = AsyncMock(
-                side_effect=httpx.ConnectError("Connection refused")
-            )
-            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-            mock_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_client.return_value = mock_instance
-
+        with patch.object(
+            backend, "get_session_info",
+            side_effect=httpx.ConnectError("Connection refused"),
+        ):
             await cmd.handle(mock_update_private, mock_context)
 
-            mock_update_private.message.reply_text.assert_called_once()
-            call_args = mock_update_private.message.reply_text.call_args[0][0]
-            assert "Failed to get session info" in call_args
+        call_text = mock_update_private.message.reply_text.call_args[0][0]
+        assert "Failed to get session info" in call_text
+        assert "Connection refused" not in call_text  # no raw error leakage
 
     @pytest.mark.asyncio
     async def test_invalid_response(self, mock_update_private, mock_context):
-        """Should reply with error on invalid response."""
-        cmd = SessionInfoCommand(agent_api_url="https://example.com")
+        backend = make_backend()
+        cmd = SessionInfoCommand(backend)
 
-        with patch("tgbot.commands.sessioninfo.httpx.AsyncClient") as mock_client:
-            mock_response = MagicMock()
-            mock_response.json.return_value = {"unexpected": "data"}
-            mock_response.raise_for_status = MagicMock()
-
-            mock_instance = AsyncMock()
-            mock_instance.post = AsyncMock(return_value=mock_response)
-            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-            mock_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_client.return_value = mock_instance
-
+        with patch.object(
+            backend, "get_session_info",
+            new_callable=AsyncMock,
+            return_value={"unexpected": "data"},
+        ):
             await cmd.handle(mock_update_private, mock_context)
 
-            mock_update_private.message.reply_text.assert_called_once_with(
-                "Failed to get session info: invalid response"
-            )
+        mock_update_private.message.reply_text.assert_called_once_with(
+            "Failed to get session info: invalid response"
+        )
 
 
 class TestSessionDisplay:
-    """Tests for session info display."""
-
     @pytest.mark.asyncio
     async def test_active_session_with_message_count(self, mock_update_private, mock_context):
-        """Should display session info with message count."""
-        cmd = SessionInfoCommand(agent_api_url="https://example.com")
+        backend = make_backend()
+        cmd = SessionInfoCommand(backend)
 
-        with patch("tgbot.commands.sessioninfo.httpx.AsyncClient") as mock_client:
-            mock_response = MagicMock()
-            mock_response.json.return_value = {
+        with patch.object(
+            backend, "get_session_info",
+            new_callable=AsyncMock,
+            return_value={
                 "conversation_id": "tg_dm_123456",
                 "session_id": "tg_dm_123456",
                 "session_exists": True,
                 "message_count": 5,
-            }
-            mock_response.raise_for_status = MagicMock()
-
-            mock_instance = AsyncMock()
-            mock_instance.post = AsyncMock(return_value=mock_response)
-            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-            mock_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_client.return_value = mock_instance
-
+            },
+        ):
             await cmd.handle(mock_update_private, mock_context)
 
-            call_args = mock_update_private.message.reply_text.call_args
-            text = call_args[0][0]
-            assert "Session info:" in text
-            assert "Active" in text
-            assert "Messages: 5" in text
+        text = mock_update_private.message.reply_text.call_args[0][0]
+        assert "Session info:" in text
+        assert "Active" in text
+        assert "Messages: 5" in text
 
     @pytest.mark.asyncio
     async def test_no_active_session(self, mock_update_private, mock_context):
-        """Should display no session message."""
-        cmd = SessionInfoCommand(agent_api_url="https://example.com")
+        backend = make_backend()
+        cmd = SessionInfoCommand(backend)
 
-        with patch("tgbot.commands.sessioninfo.httpx.AsyncClient") as mock_client:
-            mock_response = MagicMock()
-            mock_response.json.return_value = {
+        with patch.object(
+            backend, "get_session_info",
+            new_callable=AsyncMock,
+            return_value={
                 "conversation_id": "tg_dm_123456",
-                "session_id": "tg_dm_123456",
                 "session_exists": False,
-                "message_count": None,
-            }
-            mock_response.raise_for_status = MagicMock()
-
-            mock_instance = AsyncMock()
-            mock_instance.post = AsyncMock(return_value=mock_response)
-            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-            mock_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_client.return_value = mock_instance
-
+            },
+        ):
             await cmd.handle(mock_update_private, mock_context)
 
-            call_args = mock_update_private.message.reply_text.call_args
-            text = call_args[0][0]
-            assert "No active session" in text
+        text = mock_update_private.message.reply_text.call_args[0][0]
+        assert "No active session" in text

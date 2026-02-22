@@ -1,6 +1,7 @@
 """FastAPI application with Telegram bot integration."""
 
 import asyncio
+import hmac
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -142,7 +143,7 @@ async def lifespan(app: FastAPI):
         bot_token = config.get_bot_token()
         logger.info("Bot token resolved successfully")
     except ValueError as e:
-        logger.critical(f"Failed to resolve bot token: {e}")
+        logger.critical("Failed to resolve bot token", extra={"error": str(e)})
         raise
 
     # 4. Get webhook secret
@@ -320,7 +321,7 @@ async def telegram_webhook(request: Request) -> Response:
     # Validate secret header
     header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
 
-    if not header_secret or header_secret != webhook_secret:
+    if not header_secret or not hmac.compare_digest(header_secret, webhook_secret):
         remote_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("User-Agent", "unknown")
 

@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -17,6 +17,7 @@ from tgbot.handlers.image import handle_photo_message
 from tgbot.handlers.document import handle_document_message
 from tgbot.logging_config import generate_request_id
 from tgbot.services.backend_client import BackendClient, TelegramMetadata
+from tgbot.utils import derive_conversation_id as _derive_conversation_id
 
 logger = logging.getLogger(__name__)
 
@@ -26,43 +27,8 @@ MSG_BACKEND_UNAVAILABLE = "Backend unavailable, please try again later."
 MSG_UNKNOWN_COMMAND = "Unknown command. Use /start for help."
 
 
-def derive_conversation_id(update: Update) -> Tuple[str, TelegramMetadata]:
-    """
-    Derive conversation_id and metadata from Telegram update.
-
-    Args:
-        update: Telegram update object
-
-    Returns:
-        Tuple of (conversation_id, TelegramMetadata)
-
-    Conversation ID format:
-        - Private chat: tg_dm_{user_id}
-        - Group/Supergroup: tg_group_{chat_id}
-        - Unknown: tg_chat_{chat_id}
-    """
-    chat = update.effective_chat
-    user = update.effective_user
-
-    chat_id = chat.id if chat else 0
-    user_id = user.id if user else 0
-    chat_type = chat.type if chat else "unknown"
-
-    # Derive conversation_id based on chat type
-    if chat_type == "private":
-        conversation_id = f"tg_dm_{user_id}"
-    elif chat_type in ("group", "supergroup"):
-        conversation_id = f"tg_group_{chat_id}"
-    else:
-        conversation_id = f"tg_chat_{chat_id}"
-
-    metadata = TelegramMetadata(
-        chat_id=chat_id,
-        user_id=user_id,
-        chat_type=chat_type,
-    )
-
-    return conversation_id, metadata
+# Re-export for backwards compatibility with existing imports and tests
+derive_conversation_id = _derive_conversation_id
 
 
 def setup_handlers(

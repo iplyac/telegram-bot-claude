@@ -84,8 +84,8 @@ async def test_forward_document_correct_url_and_payload():
     assert captured["payload"]["mime_type"] == "application/pdf"
     assert captured["payload"]["filename"] == "report.pdf"
     assert captured["payload"]["prompt"] == "Summarise this"
-    assert captured["timeout"] == 120.0
-    assert captured["max_total_time"] == 180.0
+    assert captured["timeout"] == 300.0
+    assert captured["max_total_time"] == 360.0
     assert result == {"response": "ok"}  # content normalized to response
 
 

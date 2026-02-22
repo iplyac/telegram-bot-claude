@@ -6,12 +6,17 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from .base import BaseCommand
+from tgbot import config
 from tgbot.services.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
 
 # Max prompt length to display (leave room for formatting within Telegram's 4096 limit)
 MAX_PROMPT_DISPLAY_LENGTH = 4000
+
+# Admin user IDs — loaded once at import time from ADMIN_USER_IDS env var.
+# If empty, the command is unrestricted (not recommended for production).
+_ADMIN_USER_IDS = config.get_admin_user_ids()
 
 
 class GetPromptCommand(BaseCommand):
@@ -35,6 +40,15 @@ class GetPromptCommand(BaseCommand):
 
         user_id = update.effective_user.id
 
+        # Access control — only allowed user IDs may view the system prompt
+        if _ADMIN_USER_IDS and user_id not in _ADMIN_USER_IDS:
+            logger.warning(
+                "Unauthorized /getprompt attempt",
+                extra={"user_id": user_id},
+            )
+            await update.message.reply_text("Unauthorized.")
+            return
+
         logger.info(
             "Handling /getprompt command",
             extra={"user_id": user_id},
@@ -47,15 +61,8 @@ class GetPromptCommand(BaseCommand):
             )
             return
 
-        # Call master-agent endpoint
-        url = f"{self._backend_client.agent_api_url.rstrip('/')}/api/prompt"
-        auth_headers = self._backend_client._get_auth_headers()
-
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(url, headers=auth_headers)
-                response.raise_for_status()
-                data = response.json()
+            data = await self._backend_client.get_prompt()
 
             prompt = data.get("prompt", "")
             length = data.get("length", len(prompt))
@@ -68,14 +75,18 @@ class GetPromptCommand(BaseCommand):
                 header = f"Current prompt ({length} characters):"
 
             # Format response with code block
-            await update.message.reply_text(f"{header}\n\n```\n{prompt}\n```")
+            await update.message.reply_text(
+                f"{header}\n\n```\n{prompt}\n```",
+                parse_mode="Markdown",
+            )
 
         except httpx.HTTPError as e:
             logger.warning(
-                f"Get prompt request failed: {type(e).__name__}",
+                "Get prompt request failed",
                 extra={
                     "user_id": user_id,
+                    "error_type": type(e).__name__,
                     "error": str(e),
                 },
             )
-            await update.message.reply_text(f"Failed to get prompt: {e}")
+            await update.message.reply_text("Failed to get prompt. Please try again later.")

@@ -145,3 +145,19 @@ def get_region() -> str:
 def get_service_name() -> str:
     """Get SERVICE_NAME, defaulting to telegram-bot."""
     return os.getenv("SERVICE_NAME", "telegram-bot")
+
+
+def get_admin_user_ids() -> frozenset[int]:
+    """
+    Get ADMIN_USER_IDS as a frozenset of integers.
+
+    Reads a comma-separated list of Telegram user IDs from the ADMIN_USER_IDS
+    env var. Returns an empty frozenset if not configured (no restriction).
+    """
+    raw = os.getenv("ADMIN_USER_IDS", "")
+    ids = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    return frozenset(ids)

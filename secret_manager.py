@@ -1,6 +1,7 @@
 """Google Secret Manager integration for retrieving secrets."""
 
 import logging
+import re
 from typing import Optional
 
 from google.cloud import secretmanager
@@ -50,8 +51,6 @@ def extract_bot_token(payload: str) -> Optional[str]:
     Returns:
         Extracted token value, or None if not found
     """
-    import re
-
     if not payload:
         return None
 
