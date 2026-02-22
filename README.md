@@ -60,6 +60,7 @@ A Telegram bot with FastAPI backend designed for Google Cloud Run deployment. Su
    - Send `/promptreload` - reloads the AI agent system prompt
    - Send `/getprompt` - displays the current AI agent system prompt
    - Send a photo - the image will be forwarded to the AI agent for analysis
+   - Send a document - the file will be processed by the AI agent; returns a summary and extracted content as a `.md` attachment
 
 ### Using Secret Manager Locally
 
@@ -224,10 +225,12 @@ Secret Manager secrets can contain multiple key=value pairs. The bot extracts `T
 │   ├── telegram_bot.py      # Bot application factory
 │   ├── dispatcher.py        # Handler registration
 │   ├── config.py            # Configuration functions
+│   ├── logging_config.py    # Structured logging setup
 │   ├── handlers/
 │   │   ├── __init__.py
 │   │   ├── voice.py          # Voice message handler
-│   │   └── image.py          # Photo/image handler
+│   │   ├── image.py          # Photo/image handler
+│   │   └── document.py       # Document handler (PDF, etc.)
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── backend_client.py  # Backend API client
@@ -254,7 +257,15 @@ Secret Manager secrets can contain multiple key=value pairs. The bot extracts `T
     ├── test_health.py
     ├── test_chat_api.py
     ├── test_telegram_bot.py
-    └── test_webhook_endpoint.py
+    ├── test_webhook_endpoint.py
+    ├── test_config.py
+    ├── test_sessioninfo_command.py
+    ├── test_promptreload_command.py
+    ├── test_getprompt_command.py
+    ├── test_voice_handler.py
+    ├── test_image_handler.py
+    ├── test_backend_client_auth.py
+    └── test_document_handler.py
 ```
 
 ## Running Tests
