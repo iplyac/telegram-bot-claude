@@ -61,6 +61,7 @@ A Telegram bot with FastAPI backend designed for Google Cloud Run deployment. Su
    - Send `/getprompt` - displays the current AI agent system prompt
    - Send a photo - the image will be forwarded to the AI agent for analysis
    - Send a document - the file will be processed by the AI agent; returns a summary and extracted content as a `.md` attachment
+   - Send `/status` - shows status of all connected agents (name, version, uptime)
 
 ### Using Secret Manager Locally
 
@@ -133,6 +134,7 @@ For debugging or environments without Cloud Build access:
 |----------|--------|----------|
 | `/healthz` | GET | `{"status":"ok"}` |
 | `/healthz/bot` | GET | `{"bot_running":true,"mode":"polling\|webhook","webhook_path":"/telegram/webhook"}` |
+| `/status` | GET | `{"status":"ok","version":"...","uptime_seconds":...}` |
 
 Use these endpoints to verify deployment:
 
@@ -242,6 +244,7 @@ Secret Manager secrets can contain multiple key=value pairs. The bot extracts `T
 │       ├── test.py          # /test command
 │       ├── sessioninfo.py   # /sessioninfo command
 │       ├── promptreload.py  # /promptreload command
+│       ├── status.py        # /status command
 │       └── getprompt.py     # /getprompt command
 ├── secret_manager.py        # Secret Manager integration
 ├── app.py                   # FastAPI application
